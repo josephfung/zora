@@ -232,7 +232,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        const res = await axios.get('/api/history?limit=3');
+        const res = await axios.get('/api/history', { params: { limit: 1 } });
         const items: Array<{ jobId: string; event: { type: string; content?: Record<string, unknown>; timestamp?: string } }> = res.data?.events ?? [];
         if (items.length === 0) return;
 
@@ -241,7 +241,14 @@ const App: React.FC = () => {
           const ts = event.timestamp ? new Date(event.timestamp) : new Date();
           if (event.type === 'text' || event.type === 'text_delta') {
             const text = (event.content as Record<string, unknown>)?.text as string ?? '';
-            if (text.trim()) historical.push({ id: ++messageIdCounter, type: 'agent', content: text, timestamp: ts });
+            if (!text.trim()) continue;
+            // Merge consecutive text events into one agent bubble
+            const last = historical[historical.length - 1];
+            if (last?.type === 'agent') {
+              last.content += text;
+            } else {
+              historical.push({ id: ++messageIdCounter, type: 'agent', content: text, timestamp: ts });
+            }
           } else if (event.type === 'tool_call') {
             const tool = (event.content as Record<string, unknown>)?.tool as string ?? 'tool';
             historical.push({ id: ++messageIdCounter, type: 'tool-call', content: tool, timestamp: ts });
@@ -354,9 +361,20 @@ const App: React.FC = () => {
         } else if (data.type === 'tool_result') {
           msgType = 'tool-result';
           content = data.data?.result ?? JSON.stringify(data);
-        } else if (data.type === 'text_delta' || data.type === 'text.delta') {
-          msgType = 'agent';
-          content = data.data?.text ?? data.data?.delta ?? JSON.stringify(data);
+        } else if (data.type === 'text_delta' || data.type === 'text.delta' || data.type === 'text') {
+          // Append to the last agent message rather than creating a new bubble per delta
+          const text = data.data?.text ?? data.data?.delta ?? '';
+          if (text) {
+            setMessages(prev => {
+              const last = prev[prev.length - 1];
+              if (last?.type === 'agent') {
+                const updated = { ...last, content: last.content + text };
+                return [...prev.slice(0, -1), updated];
+              }
+              return [...prev, { id: ++messageIdCounter, type: 'agent' as const, content: text, timestamp: new Date() }].slice(-MAX_MESSAGES);
+            });
+          }
+          return; // handled above, skip the generic push below
         } else if (data.type === 'error') {
           msgType = 'system';
           content = data.data?.message ?? 'An error occurred';
