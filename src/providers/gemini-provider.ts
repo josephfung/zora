@@ -40,7 +40,8 @@ export class GeminiProvider implements LLMProvider {
   private readonly _cliPath: string;
   private _lastAuthStatus: AuthStatus | null = null;
   private _lastAuthCheckAt: number = 0;
-  private static readonly AUTH_CACHE_TTL_MS = 60_000; // re-check every 60s
+  private static readonly AUTH_CACHE_TTL_MS = 60_000;       // re-check valid auth every 60s
+  private static readonly AUTH_CACHE_FAIL_TTL_MS = 30_000;  // re-check failed auth every 30s
   private _requestCount = 0;
   private _lastRequestAt: Date | null = null;
 
@@ -77,7 +78,10 @@ export class GeminiProvider implements LLMProvider {
    */
   async checkAuth(): Promise<AuthStatus> {
     const now = Date.now();
-    if (this._lastAuthStatus?.valid && (now - this._lastAuthCheckAt) < GeminiProvider.AUTH_CACHE_TTL_MS) {
+    const ttl = this._lastAuthStatus?.valid
+      ? GeminiProvider.AUTH_CACHE_TTL_MS
+      : GeminiProvider.AUTH_CACHE_FAIL_TTL_MS;
+    if (this._lastAuthStatus && (now - this._lastAuthCheckAt) < ttl) {
       return this._lastAuthStatus;
     }
 
@@ -116,11 +120,16 @@ export class GeminiProvider implements LLMProvider {
         });
       });
 
-      child.on('close', (code) => {
+      child.on('close', (_code) => {
         if (resolved) return;
         resolved = true;
-        const valid = code === 0;
-        const isAuthenticated = valid && !stdout.toLowerCase().includes('not authenticated');
+        // gemini auth status can exit non-zero for reasons unrelated to auth
+        // (e.g. too many MCP function declarations, extension errors). Parse
+        // stdout for the actual credential signal instead of trusting exit code.
+        const out = stdout.toLowerCase();
+        const hasCredentials = out.includes('cached credentials') || out.includes('authenticated');
+        const notAuthenticated = out.includes('not authenticated') || out.includes('not logged in');
+        const isAuthenticated = hasCredentials && !notAuthenticated;
         const status = {
           valid: isAuthenticated,
           expiresAt: null,

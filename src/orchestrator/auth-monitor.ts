@@ -46,10 +46,10 @@ export class AuthMonitor {
           results.set(provider.name, auth);
 
           if (!auth.valid && auth.requiresInteraction) {
-            await this._notifications.notify(
-              'Authentication Required',
-              `${provider.name} auth expired. Please re-authenticate in the desktop app or CLI.`
-            );
+            // Log only — don't trigger OS notifications for auth failures.
+            // Auth status is visible in the dashboard. Zora fails over to
+            // another provider automatically.
+            log.warn({ provider: provider.name }, 'Provider auth invalid, failing over');
             // In a full implementation, we would call checkpointActiveJobs(provider.name) here
           } else if (auth.valid && auth.expiresAt) {
             const hoursRemaining = (auth.expiresAt.getTime() - Date.now()) / MS_PER_HOUR;

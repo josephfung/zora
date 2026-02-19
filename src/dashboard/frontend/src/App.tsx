@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Shield, Send, Gauge, Sparkles, LayoutGrid, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
 
 import WelcomeOnboarding from './components/WelcomeOnboarding';
 import TaskTemplates from './components/TaskTemplates';
@@ -59,6 +60,52 @@ function healthBarColor(score: number): string {
   return 'bg-red-500';
 }
 
+// ─── ToolGroup — collapsible group of consecutive tool calls ─────────
+
+interface ToolGroupItem { id: number; tool: string; type: 'tool-call' | 'tool-result'; timestamp: Date }
+
+const ToolGroup: React.FC<{ items: ToolGroupItem[] }> = ({ items }) => {
+  const [open, setOpen] = React.useState(false);
+  const calls = items.filter(i => i.type === 'tool-call');
+  const toolNames = [...new Set(calls.map(i => i.tool))];
+  const summary = toolNames.length <= 3
+    ? toolNames.join(', ')
+    : `${toolNames.slice(0, 2).join(', ')} +${toolNames.length - 2} more`;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.15 }}
+      className="bubble bubble-tool self-start w-full max-w-[90%]"
+    >
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 font-data text-[10px] uppercase tracking-widest text-zora-gold/60 hover:text-zora-gold/90 transition-colors"
+      >
+        <span>⚙</span>
+        <span className="font-mono normal-case tracking-normal text-white/50">{summary}</span>
+        <span className="text-white/25 ml-1">({calls.length} calls)</span>
+        <span className="ml-auto text-[9px] opacity-40">{items[0].timestamp.toLocaleTimeString()}</span>
+        <span className="opacity-40">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="mt-2 border-t border-white/10 pt-2 flex flex-col gap-1">
+          {items.map(item => (
+            <div key={item.id} className={`flex items-center gap-2 text-[10px] font-mono ${
+              item.type === 'tool-call' ? 'text-zora-gold/50' : 'text-zora-cyan/40'
+            }`}>
+              <span>{item.type === 'tool-call' ? '→' : '←'}</span>
+              <span>{item.tool}</span>
+              <span className="ml-auto text-[9px] opacity-30">{item.timestamp.toLocaleTimeString()}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </motion.div>
+  );
+};
+
 // ─── MessageBubble ──────────────────────────────────────────────────
 
 const MessageBubble: React.FC<{ msg: Message }> = ({ msg }) => {
@@ -66,9 +113,9 @@ const MessageBubble: React.FC<{ msg: Message }> = ({ msg }) => {
     agent: 'bubble bubble-agent',
     user: 'bubble bubble-user',
     system: 'bubble bubble-system',
-    'tool-call': 'bubble bubble-agent',
-    'tool-result': 'bubble bubble-agent',
-  }[msg.type];
+    'tool-call': 'bubble bubble-tool',
+    'tool-result': 'bubble bubble-tool',
+  }[msg.type] ?? 'bubble bubble-system';
 
   return (
     <motion.div
@@ -78,14 +125,29 @@ const MessageBubble: React.FC<{ msg: Message }> = ({ msg }) => {
       className={bubbleClass}
       data-testid={`bubble-${msg.type}`}
     >
-      {msg.type === 'tool-call' && (
-        <div className="tool-mini mb-1">TOOL_INVOKE</div>
+      {msg.type === 'agent' ? (
+        <div
+          style={{ fontFamily: 'var(--font-prose)', fontSize: '0.875rem', lineHeight: '1.7' }}
+          className="text-zora-white max-w-none
+            [&_p]:mb-3 [&_p:last-child]:mb-0
+            [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:mb-3 [&_li]:mb-1
+            [&_ol]:list-decimal [&_ol]:pl-5 [&_ol]:mb-3
+            [&_pre]:bg-black/50 [&_pre]:rounded-md [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:text-xs [&_pre]:my-2
+            [&_code]:bg-black/40 [&_code]:rounded [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[11px] [&_code]:text-zora-gold [&_code]:font-mono
+            [&_h1]:text-[15px] [&_h1]:font-semibold [&_h1]:mb-2 [&_h1]:mt-3 [&_h1]:text-zora-cyan
+            [&_h2]:text-[13px] [&_h2]:font-semibold [&_h2]:mb-2 [&_h2]:mt-3 [&_h2]:text-zora-cyan
+            [&_h3]:text-[12px] [&_h3]:font-semibold [&_h3]:mb-1 [&_h3]:mt-2 [&_h3]:text-zora-teal
+            [&_blockquote]:border-l-2 [&_blockquote]:border-zora-teal/40 [&_blockquote]:pl-3 [&_blockquote]:opacity-70 [&_blockquote]:my-2
+            [&_hr]:border-white/10 [&_hr]:my-3
+            [&_strong]:text-zora-white [&_strong]:font-semibold
+            [&_table]:text-xs [&_table]:my-2 [&_td]:px-2 [&_td]:py-1 [&_th]:px-2 [&_th]:py-1 [&_th]:text-zora-teal [&_th]:font-data [&_th]:uppercase [&_th]:text-[9px]"
+        >
+          <ReactMarkdown>{msg.content}</ReactMarkdown>
+        </div>
+      ) : (
+        <div>{msg.content}</div>
       )}
-      {msg.type === 'tool-result' && (
-        <div className="tool-mini mb-1">TOOL_RESULT</div>
-      )}
-      <div>{msg.content}</div>
-      <div className="text-[9px] opacity-40 mt-1">
+      <div className="text-[9px] opacity-30 mt-1.5">
         {msg.timestamp.toLocaleTimeString()}
       </div>
     </motion.div>
@@ -166,6 +228,48 @@ const App: React.FC = () => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Hydrate chat history from stored sessions on first load
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const res = await axios.get('/api/history?limit=3');
+        const items: Array<{ jobId: string; event: { type: string; content?: Record<string, unknown>; timestamp?: string } }> = res.data?.events ?? [];
+        if (items.length === 0) return;
+
+        const historical: Message[] = [];
+        for (const { event } of items) {
+          const ts = event.timestamp ? new Date(event.timestamp) : new Date();
+          if (event.type === 'text' || event.type === 'text_delta') {
+            const text = (event.content as Record<string, unknown>)?.text as string ?? '';
+            if (text.trim()) historical.push({ id: ++messageIdCounter, type: 'agent', content: text, timestamp: ts });
+          } else if (event.type === 'tool_call') {
+            const tool = (event.content as Record<string, unknown>)?.tool as string ?? 'tool';
+            historical.push({ id: ++messageIdCounter, type: 'tool-call', content: tool, timestamp: ts });
+          } else if (event.type === 'job_update') {
+            const status = (event.content as Record<string, unknown>)?.status as string ?? 'update';
+            if (status === 'started' || status === 'completed' || status === 'failed') {
+              historical.push({ id: ++messageIdCounter, type: 'system', content: `Task ${status}`, timestamp: ts });
+            }
+          } else if (event.type === 'error') {
+            const msg = (event.content as Record<string, unknown>)?.message as string ?? 'Error';
+            historical.push({ id: ++messageIdCounter, type: 'system', content: msg, timestamp: ts });
+          }
+        }
+
+        if (historical.length > 0) {
+          setMessages([
+            { id: ++messageIdCounter, type: 'system', content: '— session history —', timestamp: new Date(0) },
+            ...historical,
+            { id: ++messageIdCounter, type: 'system', content: 'Zora is ready.', timestamp: new Date() },
+          ]);
+        }
+      } catch {
+        // History unavailable, start fresh
+      }
+    };
+    loadHistory();
+  }, []);
+
   // Fetch health
   useEffect(() => {
     const fetchHealth = async () => {
@@ -198,11 +302,26 @@ const App: React.FC = () => {
 
   // SSE event stream → chat messages + task step tracking
   useEffect(() => {
+    const reconcileJobState = async () => {
+      try {
+        const res = await axios.get('/api/jobs');
+        const jobs: Array<{ status: string }> = res.data?.jobs ?? [];
+        const hasRunning = jobs.some((j) => j.status === 'running');
+        if (!hasRunning) setTaskRunning(false);
+      } catch {
+        // ignore — daemon may still be starting
+      }
+    };
+
     const es = new EventSource('/api/events');
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.type === 'connected') return;
+        if (data.type === 'connected') {
+          // Reconnect: reconcile UI state against actual backend job state
+          reconcileJobState();
+          return;
+        }
 
         let msgType: Message['type'] = 'agent';
         let content = '';
@@ -333,12 +452,33 @@ const App: React.FC = () => {
             </span>
           </div>
 
-          {/* Chat messages */}
+          {/* Chat messages — consecutive tool-calls/results are grouped */}
           <div className="flex-1 overflow-y-auto px-4 flex flex-col gap-2 lcars-scrollbar">
             <AnimatePresence>
-              {messages.map(msg => (
-                <MessageBubble key={msg.id} msg={msg} />
-              ))}
+              {(() => {
+                type Segment =
+                  | { kind: 'msg'; msg: Message }
+                  | { kind: 'tools'; items: ToolGroupItem[]; key: number };
+                const segments: Segment[] = [];
+                for (const msg of messages) {
+                  if (msg.type === 'tool-call' || msg.type === 'tool-result') {
+                    const last = segments[segments.length - 1];
+                    const item: ToolGroupItem = { id: msg.id, tool: msg.content, type: msg.type, timestamp: msg.timestamp };
+                    if (last?.kind === 'tools') {
+                      last.items.push(item);
+                    } else {
+                      segments.push({ kind: 'tools', items: [item], key: msg.id });
+                    }
+                  } else {
+                    segments.push({ kind: 'msg', msg });
+                  }
+                }
+                return segments.map(seg =>
+                  seg.kind === 'tools'
+                    ? <ToolGroup key={seg.key} items={seg.items} />
+                    : <MessageBubble key={seg.msg.id} msg={seg.msg} />
+                );
+              })()}
             </AnimatePresence>
             <div ref={chatEndRef} />
           </div>

@@ -249,6 +249,37 @@ export class DashboardServer {
       }
     });
 
+    /**
+     * GET /api/history?limit=N — Return the last N sessions' events for chat replay.
+     * The frontend fetches this on load to hydrate the message history.
+     */
+    this._app.get('/api/history', async (req, res) => {
+      try {
+        const limit = Math.min(Number(req.query.limit ?? 1), 5);
+        const sessions = await sessionManager.listSessions();
+        const recent = sessions
+          .sort((a, b) => (b.lastActivity?.getTime() ?? 0) - (a.lastActivity?.getTime() ?? 0))
+          .slice(0, limit);
+
+        // Only include message-relevant event types — skip tool_result (verbose/large)
+        const CHAT_TYPES = new Set(['text', 'text_delta', 'tool_call', 'job_update', 'error']);
+        const allEvents: Array<{ jobId: string; event: unknown }> = [];
+        for (const session of recent.reverse()) {
+          const events = await sessionManager.getHistory(session.jobId);
+          for (const event of events) {
+            const e = event as { type?: string };
+            if (CHAT_TYPES.has(e.type ?? '')) {
+              allEvents.push({ jobId: session.jobId, event });
+            }
+          }
+        }
+        res.json({ ok: true, events: allEvents });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        res.status(500).json({ ok: false, error: message });
+      }
+    });
+
     /** GET /api/system — Real process metrics for dashboard System Info panel */
     this._app.get('/api/system', (_req, res) => {
       const mem = process.memoryUsage();
