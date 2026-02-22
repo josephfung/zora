@@ -105,7 +105,9 @@ export class RetryQueue {
   }
 
   /**
-   * Returns tasks that are ready to be retried.
+   * Returns tasks that are ready to be retried, with full context for ERR-08 resume.
+   * ERR-08: Returns full RetryEntry (not just task prompt) so the caller can call
+   * _resumeTask() with the preserved TaskContext instead of re-submitting from scratch.
    */
   getReadyTasks(): TaskContext[] {
     const now = Date.now();
@@ -115,6 +117,18 @@ export class RetryQueue {
       return isNaN(time) || time <= now;
     });
     return ready.map(e => e.task);
+  }
+
+  /**
+   * ERR-08: Returns the full RetryEntry for ready tasks, preserving full TaskContext.
+   * Callers should prefer this over getReadyTasks() to enable state-continuity resume.
+   */
+  getReadyEntries(): RetryEntry[] {
+    const now = Date.now();
+    return this._queue.filter(e => {
+      const time = e.nextRunAt.getTime();
+      return isNaN(time) || time <= now;
+    });
   }
 
   /**
