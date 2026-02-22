@@ -87,13 +87,19 @@ export class GeminiProvider implements LLMProvider {
 
     return new Promise((resolve) => {
       let resolved = false;
-      // Try `gemini auth status` first for real auth verification
+      // Try `gemini auth status` first for real auth verification.
+      // "Loaded cached credentials." goes to stderr on some versions, so read both.
       const child = spawn(this._cliPath, ['auth', 'status']);
       let stdout = '';
 
       if (child.stdout) {
         child.stdout.on('data', (chunk: Buffer) => {
           stdout += chunk.toString();
+        });
+      }
+      if (child.stderr) {
+        child.stderr.on('data', (chunk: Buffer) => {
+          stdout += chunk.toString(); // merge stderr into same buffer for credential detection
         });
       }
 

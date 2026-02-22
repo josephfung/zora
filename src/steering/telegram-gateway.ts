@@ -7,6 +7,7 @@
  *   - Injects steer messages into SteeringManager.
  */
 
+import { spawn } from 'child_process';
 import type { SteeringManager } from './steering-manager.js';
 import type { SessionManager } from '../orchestrator/session-manager.js';
 import type { SteeringConfig } from '../types.js';
@@ -22,6 +23,24 @@ export interface TelegramConfig extends SteeringConfig {
   allowed_users: string[];
   enabled: boolean;
   mode?: 'polling' | 'webhook';
+  project_dir?: string;
+}
+
+/** Strip ANSI, spinner frames, and log noise — keep only the final agent reply. */
+function cleanOutput(raw: string): string {
+  return raw
+    .split('\n')
+    .filter(line => {
+      const t = line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').trim();
+      if (!t) return false;
+      if (t.startsWith('{')) return false;                    // JSON log lines
+      if (/^[◐◑◒◓◇◆⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏|/-\\]\s*(Running task|Working|Thinking)/.test(t)) return false; // spinner frames
+      if (/^\[[\?0-9]+[A-Za-z]/.test(t)) return false;       // raw ANSI sequences
+      return true;
+    })
+    .map(line => line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, ''))
+    .join('\n')
+    .trim();
 }
 
 export class TelegramGateway {
@@ -29,12 +48,14 @@ export class TelegramGateway {
   private readonly _steeringManager: SteeringManager;
   private readonly _sessionManager?: SessionManager;
   private readonly _allowedUsers: Set<string>;
+  private readonly _projectDir: string;
 
-  private constructor(bot: TelegramBotType, steeringManager: SteeringManager, allowedUsers: string[], sessionManager?: SessionManager) {
+  private constructor(bot: TelegramBotType, steeringManager: SteeringManager, allowedUsers: string[], projectDir: string, sessionManager?: SessionManager) {
     this._bot = bot;
     this._steeringManager = steeringManager;
     this._sessionManager = sessionManager;
     this._allowedUsers = new Set(allowedUsers);
+    this._projectDir = projectDir;
 
     this._setupHandlers();
   }
@@ -72,12 +93,14 @@ export class TelegramGateway {
       console.warn('[Telegram] Webhook mode selected. Ensure your webhook URL is configured externally.');
     }
     const bot = new TelegramBot(token, { polling: mode === 'polling' });
-    return new TelegramGateway(bot, steeringManager, config.allowed_users, sessionManager);
+    const projectDir = config.project_dir ?? process.env.ZORA_PROJECT_DIR ?? process.cwd();
+    return new TelegramGateway(bot, steeringManager, config.allowed_users, projectDir, sessionManager);
   }
 
   private _setupHandlers(): void {
     /**
-     * Middleware-like check for authorized users
+     * Plain text handler — fully conversational.
+     * Any authorized message that isn't a slash command runs as a task.
      */
     this._bot.on('message', (msg) => {
       const userId = msg.from?.id?.toString();
@@ -86,6 +109,53 @@ export class TelegramGateway {
         this._bot.sendMessage(msg.chat.id, '⛔ UNAUTHORIZED: Access Denied.');
         return;
       }
+
+      const text = msg.text ?? '';
+
+      // Let slash command handlers take over for commands
+      if (text.startsWith('/')) return;
+
+      // Plain text → run as a task
+      this._bot.sendMessage(msg.chat.id, '🤔 On it...');
+
+      log.info({ userId, prompt: text.slice(0, 80) }, 'Running task from Telegram');
+
+      let output = '';
+      let error = '';
+
+      // Unset CLAUDECODE so the Claude Agent SDK can spawn claude without
+      // the "nested session" guard blocking it.
+      const spawnEnv: NodeJS.ProcessEnv = { ...process.env, ZORA_PROJECT_DIR: this._projectDir, NO_COLOR: '1', FORCE_COLOR: '0' };
+      delete spawnEnv['CLAUDECODE'];
+
+      const child = spawn('zora-agent', ['ask', text], {
+        env: spawnEnv,
+        timeout: 5 * 60 * 1000, // 5 min max
+      });
+
+      child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString(); });
+      child.stderr.on('data', (chunk: Buffer) => { error += chunk.toString(); });
+
+      child.on('close', (code) => {
+        const cleaned = cleanOutput(output) || cleanOutput(error);
+        if (cleaned) {
+          // Telegram message limit is 4096 chars
+          const reply = cleaned.length > 4000
+            ? cleaned.slice(0, 3997) + '...'
+            : cleaned;
+          this._bot.sendMessage(msg.chat.id, reply);
+        } else {
+          this._bot.sendMessage(msg.chat.id, code === 0
+            ? '✅ Done.'
+            : `❌ Task failed (exit ${code}). Check daemon logs.`
+          );
+        }
+      });
+
+      child.on('error', (err) => {
+        log.error({ err: err.message }, 'Failed to spawn zora-agent ask');
+        this._bot.sendMessage(msg.chat.id, `❌ Could not start task: ${err.message}`);
+      });
     });
 
     /**

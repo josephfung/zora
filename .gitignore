@@ -72,3 +72,7 @@ state/
 /test-results/
 /playwright-report/
 .worktrees/
+
+# RuVector intelligence data
+.ruvector/
+.claude/statusline.sh
