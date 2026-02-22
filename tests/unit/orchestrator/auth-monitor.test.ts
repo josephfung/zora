@@ -29,13 +29,15 @@ describe('AuthMonitor', () => {
     expect(results.get('p2')!.valid).toBe(true);
   });
 
-  it('notifies when auth expires', async () => {
+  it('does not send OS notification when auth fails (logs only)', async () => {
+    // Auth failures are intentionally log-only to avoid notification spam.
+    // Failover happens via the provider availability check, not notifications.
     p1.setAuthValid(false);
     await monitor.checkAll();
-    
-    expect(notifications.notify).toHaveBeenCalledWith(
+
+    expect(notifications.notify).not.toHaveBeenCalledWith(
       'Authentication Required',
-      expect.stringContaining('p1 auth expired')
+      expect.any(String)
     );
   });
 

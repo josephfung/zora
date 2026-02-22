@@ -46,14 +46,27 @@ describe('GeminiProvider', () => {
   }
 
   describe('checkAuth', () => {
-    it('returns valid true if CLI exits with 0', async () => {
-      mockSpawn('gemini v1.0');
+    it('returns valid true when stdout contains "authenticated"', async () => {
+      mockSpawn('You are authenticated.');
       const auth = await provider.checkAuth();
       expect(auth.valid).toBe(true);
     });
 
-    it('returns valid false if CLI exits with non-zero', async () => {
-      mockSpawn('', 'Unauthorized', 1);
+    it('returns valid true when stderr contains "cached credentials"', async () => {
+      // Gemini CLI emits "Loaded cached credentials." to stderr on some versions
+      mockSpawn('', 'Loaded cached credentials.');
+      const auth = await provider.checkAuth();
+      expect(auth.valid).toBe(true);
+    });
+
+    it('returns valid false when output contains no credential signal', async () => {
+      mockSpawn('', '', 0);
+      const auth = await provider.checkAuth();
+      expect(auth.valid).toBe(false);
+    });
+
+    it('returns valid false if output contains "not authenticated"', async () => {
+      mockSpawn('Error: not authenticated', 'Unauthorized', 1);
       const auth = await provider.checkAuth();
       expect(auth.valid).toBe(false);
       expect(auth.requiresInteraction).toBe(true);
