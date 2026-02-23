@@ -7,6 +7,7 @@
  */
 
 import crypto from 'node:crypto';
+import { canonicalizeArgs } from '../utils/args.js';
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -120,10 +121,6 @@ export class ErrorPatternDetector {
    * Sorts keys so {a:1, b:2} and {b:2, a:1} produce the same signature.
    */
   private _normalizeArgs(args: Record<string, unknown>): string {
-    try {
-      return JSON.stringify(args, Object.keys(args).sort());
-    } catch {
-      return String(args);
-    }
+    return canonicalizeArgs(args);
   }
 }

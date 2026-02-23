@@ -290,7 +290,12 @@ export interface ErrorBudget {
   maxBudget: number;
   /** Number of retry attempts consumed so far */
   budgetConsumed: number;
-  /** Hard turn limit (maps to maxTurns) */
+  /**
+   * Hard turn limit for this task. Maps to `TaskContext.maxTurns` — when
+   * `turnsConsumed >= maxTurns` (and maxTurns > 0), the Orchestrator emits
+   * an `error_budget_exceeded` event and terminates execution. A value of 0
+   * means no turn limit is enforced.
+   */
   maxTurns: number;
   /** Number of turns consumed so far */
   turnsConsumed: number;

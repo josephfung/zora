@@ -99,7 +99,7 @@ describe('ErrorNormalizer', () => {
     });
 
     it('redacts API keys from error messages', () => {
-      const normalized = normalizer.normalize('auth error: sk-abcdefghijklmnopqrstu12345');
+      const normalized = normalizer.normalize('auth error: sk-abcdefghijklmnopqrstu12345'); // gitleaks:allow
       const report = normalizer.toFailureReport('call_1', normalized);
       // The raw sk-* key should NOT appear in the report
       expect(report).not.toContain('sk-abcdefghijklmnopqrstu12345');

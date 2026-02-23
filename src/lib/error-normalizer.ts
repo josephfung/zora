@@ -57,7 +57,7 @@ const CATEGORY_RULES: CategoryRule[] = [
   {
     category: 'NOT_FOUND',
     patterns: [
-      /\b(404|not.*found|ENOENT|no.*such.*file|does.*not.*exist|missing)\b/i,
+      /\b(404|not.*found|ENOENT|no.*such.*file|does.*not.*exist|missing.*file|missing.*path)\b/i,
     ],
   },
   {
@@ -132,7 +132,7 @@ export class ErrorNormalizer {
     // <failure_report> must be a terminal leaf — no child tags allowed.
     const escaped = this._escapeXml(normalized.safeMessage);
     return (
-      `<tool_result id="${toolCallId}" status="error">\n` +
+      `<tool_result id="${this._escapeXml(toolCallId)}" status="error">\n` +
       `  <failure_report category="${normalized.category}">\n` +
       `    ${escaped}\n` +
       `  </failure_report>\n` +

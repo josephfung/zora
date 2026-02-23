@@ -16,6 +16,7 @@ import fs from 'node:fs/promises';
 import { writeAtomic } from '../utils/fs.js';
 import { isENOENT } from '../utils/errors.js';
 import { createLogger } from '../utils/logger.js';
+import { canonicalizeArgs } from '../utils/args.js';
 
 const log = createLogger('negative-cache');
 
@@ -55,6 +56,7 @@ export class NegativeCache {
   private readonly _stateFile: string;
   private _cache: Map<string, FailureRecord> = new Map();
   private _loaded = false;
+  private _initPromise: Promise<void> | null = null;
 
   constructor(baseDir: string = path.join(os.homedir(), '.zora')) {
     this._stateFile = path.join(baseDir, 'state', 'negative-cache.json');
@@ -103,6 +105,9 @@ export class NegativeCache {
     const existing = this._cache.get(signature);
     if (existing) {
       existing.timestamps.push(now);
+      if (existing.timestamps.length > HOT_FAILING_THRESHOLD + 1) {
+        existing.timestamps = existing.timestamps.slice(-(HOT_FAILING_THRESHOLD + 1));
+      }
     } else {
       this._cache.set(signature, {
         timestamps: [now],
@@ -165,12 +170,7 @@ export class NegativeCache {
    * Compute a stable SHA-256 signature for tool_name + normalized args.
    */
   private _computeSignature(toolName: string, args: Record<string, unknown>): string {
-    let argsKey: string;
-    try {
-      argsKey = JSON.stringify(args, Object.keys(args).sort());
-    } catch {
-      argsKey = String(args);
-    }
+    const argsKey = canonicalizeArgs(args);
     return crypto
       .createHash('sha256')
       .update(toolName + ':' + argsKey)
@@ -197,7 +197,8 @@ export class NegativeCache {
 
   private async _ensureLoaded(): Promise<void> {
     if (!this._loaded) {
-      await this.init();
+      this._initPromise ??= this.init();
+      await this._initPromise;
     }
   }
 

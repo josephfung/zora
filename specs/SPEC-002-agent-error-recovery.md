@@ -88,7 +88,7 @@ interface ErrorBudget {
 - **Persistence:** File-based persistence (Path: `~/.zora/state/negative-cache.json`). TTL: 24 hours.
 - **Threshold:** If a signature has > 5 failures in the last 60 minutes, it is marked as "Hot-Failing."
 - **Intervention:** Before `Provider.execute()`, the Orchestrator checks the cache. If "Hot-Failing," it injects a system hint:
-  ```
+  ```text
   SYSTEM: The planned tool call '[tool_name]' with these specific parameters is currently failing system-wide. Attempt an alternative approach or verify dependencies.
   ```
 
@@ -103,7 +103,7 @@ interface ErrorBudget {
 **Behavior:**
 - Maintain a rolling window of the last 5 `tool_results`.
 - If the same signature (Tool + Args) appears twice with an error, the Orchestrator must inject a Hard Steering Hint:
-  ```
+  ```text
   You have attempted [ToolName] with these arguments twice and failed. You MUST change your parameters or use a different tool.
   ```
 

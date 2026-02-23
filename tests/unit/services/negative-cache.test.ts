@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { NegativeCache } from '../../../src/services/negative-cache.js';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,6 +18,10 @@ describe('NegativeCache', () => {
     tempDir = await makeTempDir();
     cache = new NegativeCache(tempDir);
     await cache.init();
+  });
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true });
   });
 
   it('returns isHotFailing=false when no failures recorded', async () => {
@@ -95,5 +99,28 @@ describe('NegativeCache', () => {
     expect(cache.size).toBe(1);
     await cache.recordFailure('tool_b', { x: 1 });
     expect(cache.size).toBe(2);
+  });
+
+  it('prunes expired TTL entries on load', async () => {
+    // Manually write a state file with expired timestamps
+    const stateDir = path.join(tempDir, 'state');
+    await fs.mkdir(stateDir, { recursive: true });
+    const expiredTs = Date.now() - 25 * 60 * 60 * 1000; // 25 hours ago (beyond 24h TTL)
+    const record = {
+      'deadbeef': {
+        timestamps: [expiredTs],
+        toolName: 'old_tool',
+        firstSeenAt: expiredTs,
+      },
+    };
+    await fs.writeFile(
+      path.join(stateDir, 'negative-cache.json'),
+      JSON.stringify(record, null, 2),
+    );
+
+    // Load a fresh cache instance — expired entry should be pruned
+    const freshCache = new NegativeCache(tempDir);
+    await freshCache.init();
+    expect(freshCache.size).toBe(0);
   });
 });
