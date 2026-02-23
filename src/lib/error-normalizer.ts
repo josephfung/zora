@@ -130,13 +130,14 @@ export class ErrorNormalizer {
   toFailureReport(toolCallId: string, normalized: NormalizedError): string {
     // Escape any XML special chars in the safe message to prevent tag injection.
     // <failure_report> must be a terminal leaf — no child tags allowed.
+    // NOTE: Do NOT wrap in <tool_result> here. The orchestrator places this string
+    // as the `result` field of a tool_result event, which the provider already
+    // wraps in a <tool_result> block when building API messages.
     const escaped = this._escapeXml(normalized.safeMessage);
     return (
-      `<tool_result id="${this._escapeXml(toolCallId)}" status="error">\n` +
-      `  <failure_report category="${normalized.category}">\n` +
-      `    ${escaped}\n` +
-      `  </failure_report>\n` +
-      `</tool_result>`
+      `<failure_report category="${normalized.category}">\n` +
+      `  ${escaped}\n` +
+      `</failure_report>`
     );
   }
 

@@ -548,6 +548,7 @@ export class Orchestrator {
 
     // ERR-09: Stale-state loop detection — track whether a tool was called this turn
     let toolCalledThisTurn = false;
+    let consecutiveNonToolTurns = 0;
     const STALE_LOOP_THRESHOLD = 3;
 
     // Event batching: buffer session writes, flush every 500ms or on done/error.
@@ -623,8 +624,9 @@ export class Orchestrator {
               log.debug({ err }, 'NegativeCache check failed (non-critical)');
             }
 
-            // ERR-09: Stale-state loop — tool call sets the flag for this turn
+            // ERR-09: Stale-state loop — tool call resets the consecutive counter
             toolCalledThisTurn = true;
+            consecutiveNonToolTurns = 0;
           }
 
           // ERR-10: Pattern detection on tool results + ERR-12: record failures/successes
@@ -718,24 +720,26 @@ export class Orchestrator {
               const budget = taskContext.errorBudget;
               budget.turnsConsumed += 1;
 
-              // Stale-state detection: if no tool was called this turn, count it
+              // Stale-state detection: count consecutive turns with no tool calls
               if (!toolCalledThisTurn) {
-                const nonToolTurns = budget.turnsConsumed;
-                if (nonToolTurns >= STALE_LOOP_THRESHOLD) {
+                consecutiveNonToolTurns += 1;
+                if (consecutiveNonToolTurns >= STALE_LOOP_THRESHOLD) {
                   const staleEvent: AgentEvent = {
                     type: 'error',
                     timestamp: new Date(),
                     source: 'orchestrator',
                     content: {
-                      message: `Stale state loop: ${nonToolTurns} consecutive turns without tool calls`,
+                      message: `Stale state loop: ${consecutiveNonToolTurns} consecutive turns without tool calls`,
                       code: 'error_budget_exceeded',
                       subtype: 'stale_state_loop',
                     } satisfies ErrorEventContent,
                   };
                   bufferedWriter.append(staleEvent);
                   if (onEvent) onEvent(staleEvent);
-                  throw new Error(`error_budget_exceeded: stale state loop detected (${nonToolTurns} turns without tool calls)`);
+                  throw new Error(`error_budget_exceeded: stale state loop detected (${consecutiveNonToolTurns} turns without tool calls)`);
                 }
+              } else {
+                consecutiveNonToolTurns = 0;
               }
 
               // Reset per-turn flag

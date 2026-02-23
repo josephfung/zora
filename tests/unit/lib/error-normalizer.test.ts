@@ -74,10 +74,12 @@ describe('ErrorNormalizer', () => {
     it('wraps error in failure_report XML', () => {
       const normalized = normalizer.normalize('IndentationError at line 5');
       const report = normalizer.toFailureReport('call_123', normalized);
-      expect(report).toContain('<tool_result id="call_123" status="error">');
+      // toFailureReport returns only the inner <failure_report> block — the caller
+      // (orchestrator) provides the outer tool_result wrapper to avoid double-wrapping.
       expect(report).toContain('<failure_report category="SYNTAX_ERROR">');
       expect(report).toContain('</failure_report>');
-      expect(report).toContain('</tool_result>');
+      expect(report).not.toContain('<tool_result');
+      expect(report).not.toContain('</tool_result>');
     });
 
     it('escapes XML special chars in error message', () => {
