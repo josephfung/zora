@@ -26,7 +26,11 @@ import type {
   TextEventContent,
   ToolResultEventContent,
   ToolCallEventContent,
+  ErrorBudget,
 } from '../types.js';
+import { ErrorNormalizer } from '../lib/error-normalizer.js';
+import { NegativeCache } from '../services/negative-cache.js';
+import { ErrorPatternDetector } from './error-pattern-detector.js';
 import { HookRunner } from '../hooks/hook-runner.js';
 import { Router } from './router.js';
 import { FailoverController } from './failover-controller.js';
@@ -100,6 +104,12 @@ export class Orchestrator {
 
   // ORCH-12: Lifecycle hooks
   private _hookRunner: HookRunner = new HookRunner();
+
+  // ERR-07: Error normalizer for safe error replay
+  private readonly _errorNormalizer: ErrorNormalizer = new ErrorNormalizer();
+
+  // ERR-12 Lite: Global negative cache for cross-session learning
+  private _negativeCache!: NegativeCache;
 
   // ORCH-14: Context transform callback
   private _transformContext: TransformContextFn = defaultTransformContext;
@@ -188,6 +198,10 @@ export class Orchestrator {
     this._retryQueue = new RetryQueue(this._baseDir);
     await this._retryQueue.init();
 
+    // ERR-12 Lite: Initialize global negative cache
+    this._negativeCache = new NegativeCache(this._baseDir);
+    await this._negativeCache.init();
+
     // R4: Schedule AuthMonitor
     this._authMonitor = new AuthMonitor({
       providers: this._providers,
@@ -209,17 +223,28 @@ export class Orchestrator {
     };
     scheduleAuthCheck();
 
-    // R5: Poll RetryQueue (every 30 seconds) — remove task only after successful re-submission
+    // R5 / ERR-08: Poll RetryQueue (every 30 seconds) — use _resumeTask to preserve full
+    // TaskContext (state continuity) instead of re-submitting just the original prompt.
     const scheduleRetryPoll = () => {
       this._retryPollTimeout = setTimeout(async () => {
         try {
-          const readyTasks = this._retryQueue.getReadyTasks();
-          for (const task of readyTasks) {
+          const readyEntries = this._retryQueue.getReadyEntries();
+          for (const entry of readyEntries) {
             try {
-              await this.submitTask({ prompt: task.task, jobId: task.jobId });
-              await this._retryQueue.remove(task.jobId);
+              // ERR-08: Increment budgetConsumed before re-executing to track retry depth
+              if (entry.task.errorBudget) {
+                entry.task.errorBudget.budgetConsumed += 1;
+                // Skip tasks with exhausted budget
+                if (entry.task.errorBudget.budgetConsumed >= entry.task.errorBudget.maxBudget) {
+                  log.warn({ jobId: entry.task.jobId }, 'Retry skipped: error budget exhausted');
+                  await this._retryQueue.remove(entry.task.jobId);
+                  continue;
+                }
+              }
+              await this._resumeTask(entry.task);
+              await this._retryQueue.remove(entry.task.jobId);
             } catch (err) {
-              log.error({ jobId: task.jobId, err }, 'Retry failed');
+              log.error({ jobId: entry.task.jobId, err }, 'Retry failed');
               // Leave task in queue for next poll cycle
             }
           }
@@ -420,6 +445,16 @@ export class Orchestrator {
     // Build custom tools (permissions + memory tools + recall_context)
     const customTools = this._createCustomTools();
 
+    // ERR-09: Build initial error budget — maxBudget from failover config, maxTurns from options
+    const maxRetries = this._config.failover.max_retries ?? 3;
+    const maxTurns = options.maxTurns ?? 0;
+    const errorBudget: ErrorBudget = {
+      maxBudget: maxRetries,
+      budgetConsumed: 0,
+      maxTurns,
+      turnsConsumed: 0,
+    };
+
     // Build task context
     const taskContext: TaskContext = {
       jobId,
@@ -433,6 +468,7 @@ export class Orchestrator {
       modelPreference: options.model,
       maxCostTier: options.maxCostTier,
       maxTurns: options.maxTurns,
+      errorBudget,
       customTools,
       canUseTool: this._policyEngine.createCanUseTool(),
     };
@@ -482,10 +518,38 @@ export class Orchestrator {
     failoverDepth = 0,
     injectionDepth = 0,
     compressor?: ContextCompressor | null,
+    patternDetectorIn?: ErrorPatternDetector,
   ): Promise<string> {
+    // ERR-09: Check error budget before every provider call
+    if (taskContext.errorBudget) {
+      const budget = taskContext.errorBudget;
+      if (budget.budgetConsumed >= budget.maxBudget) {
+        const errEvent: AgentEvent = {
+          type: 'error',
+          timestamp: new Date(),
+          source: 'orchestrator',
+          content: {
+            message: `Error budget exceeded: ${budget.budgetConsumed}/${budget.maxBudget} retries consumed`,
+            code: 'error_budget_exceeded',
+            subtype: 'budget_consumed',
+          } satisfies ErrorEventContent,
+        };
+        if (onEvent) onEvent(errEvent);
+        throw new Error(`error_budget_exceeded: retry budget exhausted (${budget.budgetConsumed}/${budget.maxBudget})`);
+      }
+    }
+
     let result = '';
     let eventsSinceLastTick = 0;
     const TICK_INTERVAL = 10; // Check compression thresholds every N events
+
+    // ERR-10: Per-execution pattern detector (in-session circuit breaker)
+    const patternDetector = patternDetectorIn ?? new ErrorPatternDetector();
+
+    // ERR-09: Stale-state loop detection — track whether a tool was called this turn
+    let toolCalledThisTurn = false;
+    let consecutiveNonToolTurns = 0;
+    const STALE_LOOP_THRESHOLD = 3;
 
     // Event batching: buffer session writes, flush every 500ms or on done/error.
     // Wrapped in try/finally to ensure close() runs on ALL exit paths including failover.
@@ -537,7 +601,89 @@ export class Orchestrator {
                 'Potential secret leak detected in tool call arguments',
               );
             }
+
+            // ERR-12 Lite: Check NegativeCache for hot-failing tool signatures
+            const args = toolCallContent.arguments ?? {};
+            try {
+              const cacheResult = await this._negativeCache.check(toolCallContent.tool, args as Record<string, unknown>);
+              if (cacheResult.isHotFailing && cacheResult.hint) {
+                log.warn(
+                  { jobId: taskContext.jobId, tool: toolCallContent.tool, failures: cacheResult.failureCount },
+                  'NegativeCache: hot-failing tool detected — injecting system hint',
+                );
+                const hintEvent: AgentEvent = {
+                  type: 'steering',
+                  timestamp: new Date(),
+                  source: 'negative-cache',
+                  content: { text: cacheResult.hint, source: 'negative-cache', author: 'system' },
+                };
+                taskContext.history.push(hintEvent);
+                if (onEvent) onEvent(hintEvent);
+              }
+            } catch (err) {
+              log.debug({ err }, 'NegativeCache check failed (non-critical)');
+            }
+
+            // ERR-09: Stale-state loop — tool call resets the consecutive counter
+            toolCalledThisTurn = true;
+            consecutiveNonToolTurns = 0;
           }
+
+          // ERR-10: Pattern detection on tool results + ERR-12: record failures/successes
+          if (event.type === 'tool_result') {
+            const toolResultContent = event.content as ToolResultEventContent;
+            const hasFailed = Boolean(toolResultContent.error);
+
+            // Find the matching tool_call in history to get name + args
+            const matchingCall = [...taskContext.history].reverse().find(
+              e => e.type === 'tool_call' &&
+                (e.content as ToolCallEventContent).toolCallId === toolResultContent.toolCallId,
+            );
+
+            if (matchingCall) {
+              const callContent = matchingCall.content as ToolCallEventContent;
+              const args = callContent.arguments ?? {};
+
+              // ERR-12: Record failure/success in persistent negative cache
+              if (hasFailed) {
+                this._negativeCache.recordFailure(callContent.tool, args as Record<string, unknown>).catch(err => {
+                  log.debug({ err }, 'NegativeCache recordFailure failed (non-critical)');
+                });
+              } else {
+                this._negativeCache.recordSuccess(callContent.tool, args as Record<string, unknown>).catch(err => {
+                  log.debug({ err }, 'NegativeCache recordSuccess failed (non-critical)');
+                });
+              }
+
+              // ERR-10: In-session circuit breaker — detect repeat failures
+              const detection = patternDetector.record(
+                callContent.tool,
+                args as Record<string, unknown>,
+                !hasFailed,
+              );
+
+              if (detection.isRepeating && detection.hint) {
+                log.warn(
+                  { jobId: taskContext.jobId, tool: detection.toolName },
+                  'ERR-10: Repeat tool failure detected — injecting hard steering hint',
+                );
+                const hintEvent: AgentEvent = {
+                  type: 'steering',
+                  timestamp: new Date(),
+                  source: 'error-pattern-detector',
+                  content: { text: detection.hint, source: 'error-pattern-detector', author: 'system' },
+                };
+                bufferedWriter.append(hintEvent);
+                taskContext.history.push(hintEvent);
+                if (onEvent) onEvent(hintEvent);
+              }
+            }
+
+            // ERR-09: Stale-state — tool_result is a "turn", but only counts if no tool call followed
+            // (tracked by text events below)
+          }
+
+          // (ERR-09: stale-state tracking is done on 'done' events below)
 
           // R7: Poll SteeringManager with debouncing (max once per 2 seconds)
           if (event.type === 'text' || event.type === 'tool_result') {
@@ -565,14 +711,87 @@ export class Orchestrator {
           // Track history for failover handoff
           taskContext.history.push(event);
 
-          // Capture result text
+          // Capture result text and enforce turn budget
           if (event.type === 'done') {
             result = (event.content as DoneEventContent).text ?? '';
+
+            // ERR-09: Increment turnsConsumed and check maxTurns limit
+            if (taskContext.errorBudget) {
+              const budget = taskContext.errorBudget;
+              budget.turnsConsumed += 1;
+
+              // Stale-state detection: count consecutive turns with no tool calls
+              if (!toolCalledThisTurn) {
+                consecutiveNonToolTurns += 1;
+                if (consecutiveNonToolTurns >= STALE_LOOP_THRESHOLD) {
+                  const staleEvent: AgentEvent = {
+                    type: 'error',
+                    timestamp: new Date(),
+                    source: 'orchestrator',
+                    content: {
+                      message: `Stale state loop: ${consecutiveNonToolTurns} consecutive turns without tool calls`,
+                      code: 'error_budget_exceeded',
+                      subtype: 'stale_state_loop',
+                    } satisfies ErrorEventContent,
+                  };
+                  bufferedWriter.append(staleEvent);
+                  if (onEvent) onEvent(staleEvent);
+                  throw new Error(`error_budget_exceeded: stale state loop detected (${consecutiveNonToolTurns} turns without tool calls)`);
+                }
+              } else {
+                consecutiveNonToolTurns = 0;
+              }
+
+              // Reset per-turn flag
+              toolCalledThisTurn = false;
+
+              // Check hard maxTurns limit
+              if (budget.maxTurns > 0 && budget.turnsConsumed >= budget.maxTurns) {
+                const turnErrEvent: AgentEvent = {
+                  type: 'error',
+                  timestamp: new Date(),
+                  source: 'orchestrator',
+                  content: {
+                    message: `Turn limit exceeded: ${budget.turnsConsumed}/${budget.maxTurns} turns consumed`,
+                    code: 'error_budget_exceeded',
+                    subtype: 'turn_limit_exceeded',
+                  } satisfies ErrorEventContent,
+                };
+                if (onEvent) onEvent(turnErrEvent);
+                throw new Error(`error_budget_exceeded: turn limit exhausted (${budget.turnsConsumed}/${budget.maxTurns})`);
+              }
+            } else {
+              // Reset per-turn flag even without budget tracking
+              toolCalledThisTurn = false;
+            }
           }
 
           // Handle errors — trigger failover (R3)
           if (event.type === 'error') {
             const errorContent = event.content as ErrorEventContent;
+            // ERR-07: Normalize error for structured logging (safe message, category)
+            const normalized = this._errorNormalizer.normalize(errorContent.message ?? 'Unknown provider error');
+            log.warn(
+              { jobId: taskContext.jobId, category: normalized.category, message: normalized.safeMessage },
+              'ERR-07: Provider error normalized',
+            );
+
+            // ERR-07: Inject failure_report as a tool_result event into history for LLM context
+            const failureToolCallId = `err_${Date.now()}`;
+            const failureReport = this._errorNormalizer.toFailureReport(failureToolCallId, normalized);
+            const failureEvent: AgentEvent = {
+              type: 'tool_result',
+              timestamp: new Date(),
+              source: 'orchestrator',
+              content: {
+                toolCallId: failureToolCallId,
+                result: failureReport,
+                error: normalized.safeMessage,
+              } satisfies ToolResultEventContent,
+            };
+            taskContext.history.push(failureEvent);
+            if (onEvent) onEvent(failureEvent);
+
             const error = new Error(errorContent.message ?? 'Unknown provider error');
 
             // Guard: skip failover if depth exceeded
@@ -588,8 +807,8 @@ export class Orchestrator {
             );
 
             if (failoverResult) {
-              // Re-execute with the failover provider (increment depth)
-              return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
+              // Re-execute with the failover provider (increment depth), passing same patternDetector
+              return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
             }
 
             // R5: Enqueue for retry if no failover available
@@ -618,7 +837,7 @@ export class Orchestrator {
           if (failoverResult) {
             // Mark the error so downstream doesn't re-trigger failover
             Orchestrator._failoverErrors.add(err);
-            return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
+            return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
           }
 
           // R5: Enqueue for retry
@@ -682,6 +901,50 @@ export class Orchestrator {
     }
 
     return result;
+  }
+
+  /**
+   * ERR-08: Resume a previously-failed task using its full serialized TaskContext.
+   *
+   * Unlike submitTask(), this skips the "Planning/Classification" phase entirely.
+   * The existing history and memoryContext are preserved so the provider can
+   * continue from the exact point of failure — State Continuity.
+   *
+   * Called by the RetryQueue poll to resume persisted task contexts.
+   *
+   * @param context - The full TaskContext as persisted by the RetryQueue
+   * @returns The final text result from the resumed execution
+   */
+  private async _resumeTask(
+    context: TaskContext,
+    onEvent?: (event: AgentEvent) => void,
+    compressor?: ContextCompressor | null,
+  ): Promise<string> {
+    if (!this._booted) throw new Error('Orchestrator.boot() must be called before _resumeTask');
+
+    log.info(
+      { jobId: context.jobId, historyLength: context.history.length },
+      'ERR-08: Resuming task with preserved context (skipping classification)',
+    );
+
+    // Reset ValidationPipeline rate limit for the resumed session
+    this._validationPipeline?.resetSession();
+
+    // Refresh canUseTool — the original closure may be stale after a restart
+    const resumeContext: TaskContext = {
+      ...context,
+      canUseTool: this._policyEngine.createCanUseTool(),
+    };
+
+    // Route to provider using the preserved classification (no re-classification)
+    let selectedProvider: LLMProvider;
+    try {
+      selectedProvider = await this._router.selectProvider(resumeContext);
+    } catch (err) {
+      throw new Error(`No provider available for resume: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return this._executeWithProvider(selectedProvider, resumeContext, onEvent, 0, 0, compressor);
   }
 
   /**

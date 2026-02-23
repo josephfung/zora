@@ -279,6 +279,28 @@ export type TaskResourceType =
   | 'search'
   | 'mixed';
 
+// ─── Error Budget (ERR-09) ───────────────────────────────────────────
+
+/**
+ * ERR-09: Hard recovery budget — tracks retry and turn consumption.
+ * The Orchestrator enforces these limits before every provider call.
+ */
+export interface ErrorBudget {
+  /** Maximum retry attempts allowed for this task */
+  maxBudget: number;
+  /** Number of retry attempts consumed so far */
+  budgetConsumed: number;
+  /**
+   * Hard turn limit for this task. Maps to `TaskContext.maxTurns` — when
+   * `turnsConsumed >= maxTurns` (and maxTurns > 0), the Orchestrator emits
+   * an `error_budget_exceeded` event and terminates execution. A value of 0
+   * means no turn limit is enforced.
+   */
+  maxTurns: number;
+  /** Number of turns consumed so far */
+  turnsConsumed: number;
+}
+
 export interface TaskContext {
   jobId: string;
   task: string;
@@ -292,6 +314,8 @@ export interface TaskContext {
   maxCostTier?: CostTier;   // cost ceiling for routing (e.g. 'included' skips 'premium')
   maxTurns?: number;
   timeout?: number;
+  /** ERR-09: Hard recovery budget — tracks retry and turn limits */
+  errorBudget?: ErrorBudget;
   /** Custom tools injected into the execution (memory tools, permissions, etc.) */
   customTools?: Array<{
     name: string;
