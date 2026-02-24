@@ -237,7 +237,13 @@ export class IntentCapsuleManager {
    * Returns null if no active capsule.
    */
   serializeActiveCapsule(): IntentCapsule | null {
-    return this._activeCapsule ? { ...this._activeCapsule } : null;
+    if (!this._activeCapsule) return null;
+    return {
+      ...this._activeCapsule,
+      // Deep-copy arrays so mutations to the snapshot don't affect the active capsule
+      allowedActionCategories: [...this._activeCapsule.allowedActionCategories],
+      mandateKeywords: [...this._activeCapsule.mandateKeywords],
+    };
   }
 
   /**

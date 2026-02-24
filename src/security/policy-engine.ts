@@ -23,6 +23,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import type { ZoraPolicy, FilesystemPolicy } from '../types.js';
+import { DEFAULT_DRIFT_BLOCKING_MODE } from '../config/defaults.js';
 import type { BudgetStatus, DryRunResult } from './security-types.js';
 import type { IntentCapsuleManager } from './intent-capsule.js';
 import type { AuditLogger } from './audit-logger.js';
@@ -95,7 +96,7 @@ export class PolicyEngine {
     this._policy = policy;
     this._homeDir = os.homedir();
     this._flagCallback = flagCallback;
-    this._driftBlockingMode = policy.drift_blocking_mode ?? 'strict';
+    this._driftBlockingMode = policy.drift_blocking_mode ?? DEFAULT_DRIFT_BLOCKING_MODE;
   }
 
   /**

@@ -83,7 +83,7 @@ export const DEFAULT_SECURITY: SecurityConfig = {
 
 /**
  * Default drift blocking mode for ZoraPolicy.
- * 'strict' blocks destructive actions (delete/write/bash/unknown) on drift.
+ * 'strict' blocks destructive actions (write_file/edit_file/shell_exec/shell_exec_destructive/git_push/unknown) on drift.
  * 'advisory' logs only; 'paranoid' blocks all drifting actions.
  */
 export const DEFAULT_DRIFT_BLOCKING_MODE = 'strict' as const satisfies 'advisory' | 'strict' | 'paranoid';
