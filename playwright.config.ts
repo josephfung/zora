@@ -5,6 +5,7 @@ export default defineConfig({
   testMatch: ['dashboard-browser.test.ts', 'dashboard-synthetic.test.ts'],
   timeout: 30_000,
   retries: 0,
+  workers: 1, // Run test files sequentially to avoid port conflicts between server instances
   use: {
     baseURL: 'http://localhost:7071',
   },
