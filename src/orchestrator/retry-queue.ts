@@ -105,16 +105,23 @@ export class RetryQueue {
   }
 
   /**
-   * Returns tasks that are ready to be retried.
+   * Returns tasks that are ready to be retried (nextRunAt <= now).
+   * Prefer getReadyEntries() when you need the full RetryEntry for ERR-08 state-continuity resume.
    */
   getReadyTasks(): TaskContext[] {
+    return this.getReadyEntries().map(e => e.task);
+  }
+
+  /**
+   * ERR-08: Returns the full RetryEntry for ready tasks, preserving full TaskContext.
+   * Callers should prefer this over getReadyTasks() to enable state-continuity resume.
+   */
+  getReadyEntries(): RetryEntry[] {
     const now = Date.now();
-    const ready = this._queue.filter(e => {
+    return this._queue.filter(e => {
       const time = e.nextRunAt.getTime();
-      // NaN guard: if nextRunAt is invalid, treat as immediately ready
       return isNaN(time) || time <= now;
     });
-    return ready.map(e => e.task);
   }
 
   /**
