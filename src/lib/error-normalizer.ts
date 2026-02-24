@@ -127,7 +127,7 @@ export class ErrorNormalizer {
    * @param toolCallId - The ID of the failing tool call
    * @param normalized - The normalized error to render
    */
-  toFailureReport(toolCallId: string, normalized: NormalizedError): string {
+  toFailureReport(_toolCallId: string, normalized: NormalizedError): string {
     // Escape any XML special chars in the safe message to prevent tag injection.
     // <failure_report> must be a terminal leaf — no child tags allowed.
     // NOTE: Do NOT wrap in <tool_result> here. The orchestrator places this string

@@ -686,6 +686,7 @@ export interface ZoraPolicy {
   network: NetworkPolicy;
   budget?: BudgetPolicy;
   dry_run?: DryRunPolicy;
+  drift_blocking_mode?: 'advisory' | 'strict' | 'paranoid';
 }
 
 // ─── Worker Capability Token ─────────────────────────────────────────

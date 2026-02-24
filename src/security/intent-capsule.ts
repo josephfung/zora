@@ -87,10 +87,15 @@ export class IntentCapsuleManager {
       .update(payload)
       .digest('hex');
 
-    return crypto.timingSafeEqual(
-      Buffer.from(capsule.signature, 'hex'),
-      Buffer.from(expectedSignature, 'hex'),
-    );
+    try {
+      const sigBuf = Buffer.from(capsule.signature, 'hex');
+      const expBuf = Buffer.from(expectedSignature, 'hex');
+      // timingSafeEqual throws if buffers differ in length
+      if (sigBuf.length !== expBuf.length) return false;
+      return crypto.timingSafeEqual(sigBuf, expBuf);
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -167,11 +172,91 @@ export class IntentCapsuleManager {
   }
 
   /**
+   * Infer allowed action categories from a mandate string.
+   * Parses constraint signals to determine what action types the user permits.
+   *
+   * Category names returned here MUST match those produced by PolicyEngine._classifyAction():
+   *   'write_file', 'edit_file', 'shell_exec', 'shell_exec_destructive',
+   *   'git_push', 'git_operation', 'unknown' (null → unknown)
+   */
+  inferCategories(mandate: string): string[] {
+    const lower = mandate.toLowerCase();
+
+    // "don't action", "suggest only", "preview", "dry run", "don't execute"
+    const readOnlyPatterns = [
+      /don['']?t\s+action/,
+      /suggest\s+only/,
+      /dry.?run/,
+      /preview\s+only/,
+      /don['']?t\s+execute/,
+      /read.?only/,
+      /no\s+action/,
+      /without\s+acting/,
+      /before\s+i\s+tell\s+you/,
+      /until\s+i\s+(tell|confirm|approve|say)/,
+      /don['']?t\s+do\s+anything/,
+    ];
+
+    for (const pattern of readOnlyPatterns) {
+      if (pattern.test(lower)) {
+        // Allow only read-like operations. _classifyAction returns null (→ 'unknown') for
+        // read tools (Read, Glob, Grep) so 'unknown' must be included for reads to pass.
+        return ['unknown'];
+      }
+    }
+
+    // "don't delete", "no deletions"
+    const noDeletePatterns = [
+      /don['']?t\s+delete/,
+      /no\s+delet/,
+      /don['']?t\s+remove/,
+      /don['']?t\s+rm/,
+    ];
+
+    for (const pattern of noDeletePatterns) {
+      if (pattern.test(lower)) {
+        // Allow everything except destructive shell/git operations
+        return ['unknown', 'write_file', 'edit_file', 'shell_exec', 'git_operation'];
+      }
+    }
+
+    // No constraint signals detected — return empty (all categories permitted)
+    return [];
+  }
+
+  /**
    * Clear the active capsule (session end).
    */
   clearCapsule(): void {
     this._activeCapsule = null;
     this._driftHistory = [];
+  }
+
+  /**
+   * Serialize the active capsule to a plain object for persistence.
+   * Returns null if no active capsule.
+   */
+  serializeActiveCapsule(): IntentCapsule | null {
+    if (!this._activeCapsule) return null;
+    return {
+      ...this._activeCapsule,
+      // Deep-copy arrays so mutations to the snapshot don't affect the active capsule
+      allowedActionCategories: [...this._activeCapsule.allowedActionCategories],
+      mandateKeywords: [...this._activeCapsule.mandateKeywords],
+    };
+  }
+
+  /**
+   * Restore a previously serialized capsule as the active capsule.
+   * Verifies the HMAC signature before restoring — rejects tampered capsules.
+   */
+  restoreCapsule(capsule: IntentCapsule): boolean {
+    if (!this.verifyCapsule(capsule)) {
+      return false;
+    }
+    this._activeCapsule = capsule;
+    this._driftHistory = [];
+    return true;
   }
 
   /**

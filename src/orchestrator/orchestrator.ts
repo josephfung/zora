@@ -436,7 +436,15 @@ export class Orchestrator {
 
     // ASI01: Create signed intent capsule for goal drift detection
     if (this._intentCapsuleManager) {
-      this._intentCapsuleManager.createCapsule(sanitizedPrompt);
+      const inferredCategories = this._intentCapsuleManager.inferCategories(sanitizedPrompt);
+      this._intentCapsuleManager.createCapsule(sanitizedPrompt, {
+        // Only set allowedActionCategories when constraints were actually inferred.
+        // Passing an empty array would block all actions; undefined means no restriction.
+        allowedActionCategories: inferredCategories.length > 0 ? inferredCategories : undefined,
+      });
+      if (inferredCategories.length > 0) {
+        log.info({ jobId, inferredCategories }, 'Intent capsule created with inferred action categories');
+      }
     }
 
     // Classify task for routing
@@ -807,8 +815,9 @@ export class Orchestrator {
             );
 
             if (failoverResult) {
-              // Re-execute with the failover provider (increment depth), passing same patternDetector
-              return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
+              // Re-execute with the failover provider (increment depth)
+              // Preserve intent capsule across failover and pass same patternDetector
+              return this._executeWithFailoverProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
             }
 
             // R5: Enqueue for retry if no failover available
@@ -837,7 +846,8 @@ export class Orchestrator {
           if (failoverResult) {
             // Mark the error so downstream doesn't re-trigger failover
             Orchestrator._failoverErrors.add(err);
-            return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
+            // Preserve intent capsule across failover and pass same patternDetector
+            return this._executeWithFailoverProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
           }
 
           // R5: Enqueue for retry
@@ -1030,6 +1040,31 @@ export class Orchestrator {
       { jobId: taskContext.jobId, extracted: result.items.length, saved: savedCount },
       'Memory extraction complete',
     );
+  }
+
+  /**
+   * Execute with a failover provider while preserving the active intent capsule.
+   * Serializes the capsule before handing off to the next provider and restores
+   * it afterwards if the execution cleared it (defensive measure).
+   */
+  private async _executeWithFailoverProvider(
+    nextProvider: LLMProvider,
+    taskContext: TaskContext,
+    onEvent: ((event: AgentEvent) => void) | undefined,
+    failoverDepth: number,
+    injectionDepth: number,
+    compressor?: ContextCompressor | null,
+    patternDetector?: ErrorPatternDetector,
+  ): Promise<string> {
+    const capsuleSnapshot = this._intentCapsuleManager?.serializeActiveCapsule() ?? null;
+    const result = await this._executeWithProvider(nextProvider, taskContext, onEvent, failoverDepth, injectionDepth, compressor, patternDetector);
+    if (capsuleSnapshot && this._intentCapsuleManager && !this._intentCapsuleManager.getActiveCapsule()) {
+      const restored = this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
+      if (!restored) {
+        log.warn({ jobId: taskContext.jobId }, 'Failed to restore intent capsule after failover — drift detection disabled for remainder of task');
+      }
+    }
+    return result;
   }
 
   /**

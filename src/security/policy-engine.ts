@@ -23,6 +23,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
 import type { ZoraPolicy, FilesystemPolicy } from '../types.js';
+import { DEFAULT_DRIFT_BLOCKING_MODE } from '../config/defaults.js';
 import type { BudgetStatus, DryRunResult } from './security-types.js';
 import type { IntentCapsuleManager } from './intent-capsule.js';
 import type { AuditLogger } from './audit-logger.js';
@@ -37,6 +38,9 @@ import {
   getPolicySummary as _getPolicySummary,
   writePolicyFile,
 } from './policy-serializer.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('policy-engine');
 
 export interface ValidationResult {
   allowed: boolean;
@@ -85,10 +89,14 @@ export class PolicyEngine {
   private _intentCapsuleManager?: IntentCapsuleManager;
   private _auditLogger?: AuditLogger;
 
+  // ─── Drift Blocking Mode (ASI02) ────────────────────────────────
+  private readonly _driftBlockingMode: 'advisory' | 'strict' | 'paranoid';
+
   constructor(policy: ZoraPolicy, flagCallback?: FlagCallback) {
     this._policy = policy;
     this._homeDir = os.homedir();
     this._flagCallback = flagCallback;
+    this._driftBlockingMode = policy.drift_blocking_mode ?? DEFAULT_DRIFT_BLOCKING_MODE;
   }
 
   /**
@@ -629,8 +637,21 @@ export class PolicyEngine {
             if (!approved) {
               return { behavior: 'deny' as const, message: `Goal drift detected: ${driftResult.reason}` };
             }
+          } else {
+            // No flagCallback — apply drift blocking mode
+            if (this._driftBlockingMode === 'strict') {
+              const destructive = ['shell_exec_destructive', 'write_file', 'edit_file', 'shell_exec', 'git_push', 'unknown'].includes(driftAction);
+              if (destructive) {
+                log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift blocked (strict mode)');
+                return { behavior: 'deny' as const, message: `Goal drift blocked (strict mode): ${driftResult.reason}` };
+              }
+            } else if (this._driftBlockingMode === 'paranoid') {
+              log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift blocked (paranoid mode)');
+              return { behavior: 'deny' as const, message: `Goal drift blocked (paranoid mode): ${driftResult.reason}` };
+            }
+            // advisory mode, or strict mode with a non-destructive action: log only
+            log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason, mode: this._driftBlockingMode }, 'Goal drift detected — allowing');
           }
-          // If no flag callback, log but allow (to avoid breaking non-interactive flows)
         }
       }
 
