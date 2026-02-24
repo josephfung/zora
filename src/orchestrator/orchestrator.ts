@@ -411,7 +411,13 @@ export class Orchestrator {
 
     // ASI01: Create signed intent capsule for goal drift detection
     if (this._intentCapsuleManager) {
-      this._intentCapsuleManager.createCapsule(sanitizedPrompt);
+      const inferredCategories = this._intentCapsuleManager.inferCategories(sanitizedPrompt);
+      this._intentCapsuleManager.createCapsule(sanitizedPrompt, {
+        allowedActionCategories: inferredCategories,
+      });
+      if (inferredCategories.length > 0) {
+        log.info({ jobId, inferredCategories }, 'Intent capsule created with inferred action categories');
+      }
     }
 
     // Classify task for routing
@@ -589,7 +595,14 @@ export class Orchestrator {
 
             if (failoverResult) {
               // Re-execute with the failover provider (increment depth)
-              return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
+              // Preserve intent capsule across failover
+              const capsuleSnapshot = this._intentCapsuleManager?.serializeActiveCapsule() ?? null;
+              const result = await this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
+              // Restore capsule if it was cleared during execution (defensive)
+              if (capsuleSnapshot && this._intentCapsuleManager && !this._intentCapsuleManager.getActiveCapsule()) {
+                this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
+              }
+              return result;
             }
 
             // R5: Enqueue for retry if no failover available
@@ -618,7 +631,14 @@ export class Orchestrator {
           if (failoverResult) {
             // Mark the error so downstream doesn't re-trigger failover
             Orchestrator._failoverErrors.add(err);
-            return this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
+            // Preserve intent capsule across failover
+            const capsuleSnapshot = this._intentCapsuleManager?.serializeActiveCapsule() ?? null;
+            const result = await this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
+            // Restore capsule if it was cleared during execution (defensive)
+            if (capsuleSnapshot && this._intentCapsuleManager && !this._intentCapsuleManager.getActiveCapsule()) {
+              this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
+            }
+            return result;
           }
 
           // R5: Enqueue for retry

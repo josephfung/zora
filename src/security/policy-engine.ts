@@ -37,6 +37,9 @@ import {
   getPolicySummary as _getPolicySummary,
   writePolicyFile,
 } from './policy-serializer.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('policy-engine');
 
 export interface ValidationResult {
   allowed: boolean;
@@ -85,10 +88,14 @@ export class PolicyEngine {
   private _intentCapsuleManager?: IntentCapsuleManager;
   private _auditLogger?: AuditLogger;
 
+  // ─── Drift Blocking Mode (ASI02) ────────────────────────────────
+  private readonly _driftBlockingMode: 'advisory' | 'strict' | 'paranoid';
+
   constructor(policy: ZoraPolicy, flagCallback?: FlagCallback) {
     this._policy = policy;
     this._homeDir = os.homedir();
     this._flagCallback = flagCallback;
+    this._driftBlockingMode = policy.drift_blocking_mode ?? 'strict';
   }
 
   /**
@@ -629,8 +636,21 @@ export class PolicyEngine {
             if (!approved) {
               return { behavior: 'deny' as const, message: `Goal drift detected: ${driftResult.reason}` };
             }
+          } else {
+            // No flagCallback — apply drift blocking mode
+            if (this._driftBlockingMode === 'strict') {
+              const destructive = ['delete', 'write', 'bash', 'unknown'].includes(driftAction);
+              if (destructive) {
+                log.warn({ jobId: undefined, driftAction, reason: driftResult.reason }, 'Goal drift blocked (strict mode)');
+                return { behavior: 'deny' as const, message: `Goal drift blocked (strict mode): ${driftResult.reason}` };
+              }
+            } else if (this._driftBlockingMode === 'paranoid') {
+              log.warn({ driftAction, reason: driftResult.reason }, 'Goal drift blocked (paranoid mode)');
+              return { behavior: 'deny' as const, message: `Goal drift blocked (paranoid mode): ${driftResult.reason}` };
+            }
+            // advisory: log only
+            log.warn({ driftAction, reason: driftResult.reason }, 'Goal drift detected (advisory mode, allowing)');
           }
-          // If no flag callback, log but allow (to avoid breaking non-interactive flows)
         }
       }
 

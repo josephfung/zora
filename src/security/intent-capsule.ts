@@ -167,11 +167,78 @@ export class IntentCapsuleManager {
   }
 
   /**
+   * Infer allowed action categories from a mandate string.
+   * Parses constraint signals to determine what action types the user permits.
+   */
+  inferCategories(mandate: string): string[] {
+    const lower = mandate.toLowerCase();
+
+    // "don't action", "suggest only", "preview", "dry run", "don't execute"
+    const readOnlyPatterns = [
+      /don['']?t\s+action/,
+      /suggest\s+only/,
+      /dry.?run/,
+      /preview\s+only/,
+      /don['']?t\s+execute/,
+      /read.?only/,
+      /no\s+action/,
+      /without\s+acting/,
+      /before\s+i\s+tell\s+you/,
+      /until\s+i\s+(tell|confirm|approve|say)/,
+      /don['']?t\s+do\s+anything/,
+    ];
+
+    for (const pattern of readOnlyPatterns) {
+      if (pattern.test(lower)) {
+        return ['read'];
+      }
+    }
+
+    // "don't delete", "no deletions"
+    const noDeletePatterns = [
+      /don['']?t\s+delete/,
+      /no\s+delet/,
+      /don['']?t\s+remove/,
+      /don['']?t\s+rm/,
+    ];
+
+    for (const pattern of noDeletePatterns) {
+      if (pattern.test(lower)) {
+        return ['read', 'write', 'create'];
+      }
+    }
+
+    // No constraint signals detected — return empty (all categories permitted)
+    return [];
+  }
+
+  /**
    * Clear the active capsule (session end).
    */
   clearCapsule(): void {
     this._activeCapsule = null;
     this._driftHistory = [];
+  }
+
+  /**
+   * Serialize the active capsule to a plain object for persistence.
+   * Returns null if no active capsule.
+   */
+  serializeActiveCapsule(): IntentCapsule | null {
+    return this._activeCapsule ? { ...this._activeCapsule } : null;
+  }
+
+  /**
+   * Restore a previously serialized capsule as the active capsule.
+   * Verifies the HMAC signature before restoring — rejects tampered capsules.
+   */
+  restoreCapsule(capsule: IntentCapsule): boolean {
+    if (!this.verifyCapsule(capsule)) {
+      return false;
+    }
+    this._activeCapsule = capsule;
+    this._driftHistory = [];
+    return true;
   }
 
   /**
