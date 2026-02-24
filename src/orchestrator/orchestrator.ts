@@ -413,7 +413,9 @@ export class Orchestrator {
     if (this._intentCapsuleManager) {
       const inferredCategories = this._intentCapsuleManager.inferCategories(sanitizedPrompt);
       this._intentCapsuleManager.createCapsule(sanitizedPrompt, {
-        allowedActionCategories: inferredCategories,
+        // Only set allowedActionCategories when constraints were actually inferred.
+        // Passing an empty array would block all actions; undefined means no restriction.
+        allowedActionCategories: inferredCategories.length > 0 ? inferredCategories : undefined,
       });
       if (inferredCategories.length > 0) {
         log.info({ jobId, inferredCategories }, 'Intent capsule created with inferred action categories');
@@ -596,13 +598,7 @@ export class Orchestrator {
             if (failoverResult) {
               // Re-execute with the failover provider (increment depth)
               // Preserve intent capsule across failover
-              const capsuleSnapshot = this._intentCapsuleManager?.serializeActiveCapsule() ?? null;
-              const result = await this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
-              // Restore capsule if it was cleared during execution (defensive)
-              if (capsuleSnapshot && this._intentCapsuleManager && !this._intentCapsuleManager.getActiveCapsule()) {
-                this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
-              }
-              return result;
+              return this._executeWithFailoverProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
             }
 
             // R5: Enqueue for retry if no failover available
@@ -632,13 +628,7 @@ export class Orchestrator {
             // Mark the error so downstream doesn't re-trigger failover
             Orchestrator._failoverErrors.add(err);
             // Preserve intent capsule across failover
-            const capsuleSnapshot = this._intentCapsuleManager?.serializeActiveCapsule() ?? null;
-            const result = await this._executeWithProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
-            // Restore capsule if it was cleared during execution (defensive)
-            if (capsuleSnapshot && this._intentCapsuleManager && !this._intentCapsuleManager.getActiveCapsule()) {
-              this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
-            }
-            return result;
+            return this._executeWithFailoverProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor);
           }
 
           // R5: Enqueue for retry
@@ -787,6 +777,27 @@ export class Orchestrator {
       { jobId: taskContext.jobId, extracted: result.items.length, saved: savedCount },
       'Memory extraction complete',
     );
+  }
+
+  /**
+   * Execute with a failover provider while preserving the active intent capsule.
+   * Serializes the capsule before handing off to the next provider and restores
+   * it afterwards if the execution cleared it (defensive measure).
+   */
+  private async _executeWithFailoverProvider(
+    nextProvider: LLMProvider,
+    taskContext: TaskContext,
+    onEvent: ((event: AgentEvent) => void) | undefined,
+    failoverDepth: number,
+    injectionDepth: number,
+    compressor?: ContextCompressor | null,
+  ): Promise<string> {
+    const capsuleSnapshot = this._intentCapsuleManager?.serializeActiveCapsule() ?? null;
+    const result = await this._executeWithProvider(nextProvider, taskContext, onEvent, failoverDepth, injectionDepth, compressor);
+    if (capsuleSnapshot && this._intentCapsuleManager && !this._intentCapsuleManager.getActiveCapsule()) {
+      this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
+    }
+    return result;
   }
 
   /**

@@ -87,10 +87,15 @@ export class IntentCapsuleManager {
       .update(payload)
       .digest('hex');
 
-    return crypto.timingSafeEqual(
-      Buffer.from(capsule.signature, 'hex'),
-      Buffer.from(expectedSignature, 'hex'),
-    );
+    try {
+      const sigBuf = Buffer.from(capsule.signature, 'hex');
+      const expBuf = Buffer.from(expectedSignature, 'hex');
+      // timingSafeEqual throws if buffers differ in length
+      if (sigBuf.length !== expBuf.length) return false;
+      return crypto.timingSafeEqual(sigBuf, expBuf);
+    } catch {
+      return false;
+    }
   }
 
   /**

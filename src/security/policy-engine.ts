@@ -639,17 +639,17 @@ export class PolicyEngine {
           } else {
             // No flagCallback — apply drift blocking mode
             if (this._driftBlockingMode === 'strict') {
-              const destructive = ['delete', 'write', 'bash', 'unknown'].includes(driftAction);
+              const destructive = ['shell_exec_destructive', 'write_file', 'edit_file', 'shell_exec', 'git_push', 'unknown'].includes(driftAction);
               if (destructive) {
-                log.warn({ jobId: undefined, driftAction, reason: driftResult.reason }, 'Goal drift blocked (strict mode)');
+                log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift blocked (strict mode)');
                 return { behavior: 'deny' as const, message: `Goal drift blocked (strict mode): ${driftResult.reason}` };
               }
             } else if (this._driftBlockingMode === 'paranoid') {
-              log.warn({ driftAction, reason: driftResult.reason }, 'Goal drift blocked (paranoid mode)');
+              log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift blocked (paranoid mode)');
               return { behavior: 'deny' as const, message: `Goal drift blocked (paranoid mode): ${driftResult.reason}` };
             }
             // advisory: log only
-            log.warn({ driftAction, reason: driftResult.reason }, 'Goal drift detected (advisory mode, allowing)');
+            log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift detected (advisory mode, allowing)');
           }
         }
       }
