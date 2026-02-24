@@ -82,19 +82,20 @@ test.describe('Page Load Journey', () => {
   test('main panels render', async ({ page }) => {
     await page.goto(baseUrl);
     await expect(page.locator('text=Activity Feed')).toBeVisible();
-    await expect(page.locator('text=Safety').first()).toBeVisible();
+    await expect(page.locator('button:has-text("Safety")')).toBeVisible();
     await expect(page.locator('text=AI Providers')).toBeVisible();
   });
 
   test('footer displays version and dashboard label', async ({ page }) => {
     await page.goto(baseUrl);
-    await expect(page.locator('text=Dashboard').first()).toBeVisible();
+    // Footer label uses exact text "Dashboard" in its own div (header uses "ZORA / DASHBOARD")
+    await expect(page.locator('div:text-is("Dashboard")')).toBeVisible();
     await expect(page.locator('text=Zora v0.9.5')).toBeVisible();
   });
 
   test('initial chat messages are visible', async ({ page }) => {
     await page.goto(baseUrl);
-    await expect(page.locator('text=Zora is ready.').first()).toBeVisible();
+    await expect(page.locator('.bubble-system:has-text("Zora is ready.")')).toBeVisible();
   });
 
   test('LCARS header bar is present', async ({ page }) => {
@@ -213,6 +214,11 @@ test.describe('Quota & Usage Display', () => {
 // ─── 4. Steering Message Flow ────────────────────────────────────────
 
 test.describe('Steering Message Flow', () => {
+  test.beforeEach(async ({ page }) => {
+    // Dismiss the WelcomeOnboarding overlay so inputs and buttons are interactive
+    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
+  });
+
   test('steering input and send button are present', async ({ page }) => {
     await page.goto(baseUrl);
     const input = page.locator('input[placeholder="Ask Zora to do something..."]');
@@ -221,8 +227,6 @@ test.describe('Steering Message Flow', () => {
   });
 
   test('user types message and submits via button click', async ({ page }) => {
-    // Dismiss onboarding overlay so the main input is interactive
-    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
     await page.goto(baseUrl);
     const input = page.locator('input[placeholder="Ask Zora to do something..."]');
     await input.fill('Increase output verbosity');
@@ -233,8 +237,6 @@ test.describe('Steering Message Flow', () => {
   });
 
   test('user submits message via Enter key', async ({ page }) => {
-    // Dismiss onboarding overlay so the main input is interactive
-    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
     await page.goto(baseUrl);
     const input = page.locator('input[placeholder="Ask Zora to do something..."]');
     await input.fill('Switch to defensive mode');
@@ -244,8 +246,6 @@ test.describe('Steering Message Flow', () => {
   });
 
   test('input clears after successful submission', async ({ page }) => {
-    // Dismiss onboarding overlay so the main input is interactive
-    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
     await page.goto(baseUrl);
     const input = page.locator('input[placeholder="Ask Zora to do something..."]');
     await input.fill('Run diagnostics');
@@ -255,8 +255,6 @@ test.describe('Steering Message Flow', () => {
   });
 
   test('empty message does not submit', async ({ page }) => {
-    // Dismiss onboarding overlay so the SEND button is interactive
-    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
     await page.goto(baseUrl);
     // Count existing user bubbles
     const initialCount = await page.locator('.bubble-user').count();
@@ -386,6 +384,11 @@ test.describe('SSE Connection', () => {
 // ─── 6. Error Handling ──────────────────────────────────────────────
 
 test.describe('Error Handling', () => {
+  test.beforeEach(async ({ page }) => {
+    // Dismiss the WelcomeOnboarding overlay so inputs and buttons are interactive
+    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
+  });
+
   test('health API reports CRITICAL when all providers fail auth', async ({ request }) => {
     const originalCheckAuth = provider.checkAuth.bind(provider);
     const originalCheckAuth2 = secondProvider.checkAuth.bind(secondProvider);
@@ -426,8 +429,6 @@ test.describe('Error Handling', () => {
   });
 
   test('dashboard shows error on steer failure', async ({ page }) => {
-    // Dismiss onboarding overlay so the main input is interactive
-    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
     await page.goto(baseUrl);
 
     await page.route('**/api/steer', (route) => {
@@ -449,6 +450,11 @@ test.describe('Error Handling', () => {
 // ─── 7. Responsive Layout ───────────────────────────────────────────
 
 test.describe('Responsive Layout', () => {
+  test.beforeEach(async ({ page }) => {
+    // Dismiss the WelcomeOnboarding overlay so tabs and buttons are interactive
+    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
+  });
+
   test('flex layout renders at desktop width', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(baseUrl);
@@ -463,8 +469,6 @@ test.describe('Responsive Layout', () => {
   });
 
   test('safety protocols panel displays active state', async ({ page }) => {
-    // Dismiss onboarding overlay so tabs are interactive
-    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
     await page.goto(baseUrl);
     // Navigate to the Safety/Security tab
     await page.click('button:has-text("Safety")');
