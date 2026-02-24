@@ -358,12 +358,12 @@
           {
             "type": "command",
             "timeout": 2000,
-            "command": "npx agentic-flow@alpha workers dispatch-prompt \"$CLAUDE_USER_PROMPT\" || true"
+            "command": "ZORA_USER_PROMPT=\"$CLAUDE_USER_PROMPT\" npx agentic-flow@alpha workers dispatch-prompt --from-env ZORA_USER_PROMPT || true"
           },
           {
             "type": "command",
             "timeout": 1000,
-            "command": "npx agentic-flow@alpha workers inject-context \"$CLAUDE_USER_PROMPT\" || true"
+            "command": "ZORA_USER_PROMPT=\"$CLAUDE_USER_PROMPT\" npx agentic-flow@alpha workers inject-context --from-env ZORA_USER_PROMPT || true"
           }
         ]
       }

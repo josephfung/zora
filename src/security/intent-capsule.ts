@@ -174,6 +174,10 @@ export class IntentCapsuleManager {
   /**
    * Infer allowed action categories from a mandate string.
    * Parses constraint signals to determine what action types the user permits.
+   *
+   * Category names returned here MUST match those produced by PolicyEngine._classifyAction():
+   *   'write_file', 'edit_file', 'shell_exec', 'shell_exec_destructive',
+   *   'git_push', 'git_operation', 'unknown' (null → unknown)
    */
   inferCategories(mandate: string): string[] {
     const lower = mandate.toLowerCase();
@@ -195,7 +199,9 @@ export class IntentCapsuleManager {
 
     for (const pattern of readOnlyPatterns) {
       if (pattern.test(lower)) {
-        return ['read'];
+        // Allow only read-like operations. _classifyAction returns null (→ 'unknown') for
+        // read tools (Read, Glob, Grep) so 'unknown' must be included for reads to pass.
+        return ['unknown'];
       }
     }
 
@@ -209,7 +215,8 @@ export class IntentCapsuleManager {
 
     for (const pattern of noDeletePatterns) {
       if (pattern.test(lower)) {
-        return ['read', 'write', 'create'];
+        // Allow everything except destructive shell/git operations
+        return ['unknown', 'write_file', 'edit_file', 'shell_exec', 'git_operation'];
       }
     }
 

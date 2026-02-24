@@ -191,17 +191,27 @@ this._intentCapsuleManager.createCapsule(sanitizedPrompt);
 Without categories, drift detection falls back to keyword overlap only. If the user's prompt contains action words (e.g. "suggest what you would *delete*"), those keywords appear in the mandate and subsequent delete actions score as *consistent*. The structural block is never engaged.
 
 **Fix:**
-1. Add `inferCategories(mandate: string): string[]` to `IntentCapsuleManager` that parses constraint signals:
-   - "don't action" / "suggest only" / "preview" / "dry run" → `['read']`
-   - "don't delete" / "read only" → `['read', 'write']`
-   - "confirm before" → set `allowedActionCategories: []` + wire `always_flag` for all actions
-2. Call it in `submitTask()`:
+1. Add `inferCategories(mandate: string): string[]` to `IntentCapsuleManager` that parses constraint signals.
+   Categories returned must match `PolicyEngine._classifyAction()` output values:
+   `'write_file'`, `'edit_file'`, `'shell_exec'`, `'shell_exec_destructive'`, `'git_push'`, `'git_operation'`, `'unknown'`.
+   - "don't action" / "suggest only" / "preview" / "dry run" → `['unknown']`
+     (Read/Glob/Grep return `null` from `_classifyAction`, which becomes `'unknown'` in drift checks)
+   - "don't delete" / "read only" → `['unknown', 'write_file', 'edit_file', 'shell_exec', 'git_operation']`
+   - "confirm before" → deferred (see note below)
+2. Call it in `submitTask()`, passing `undefined` (not `[]`) when no constraints are inferred
+   so that an empty list is not misread as "block all actions":
    ```typescript
    const inferredCategories = this._intentCapsuleManager.inferCategories(sanitizedPrompt);
    this._intentCapsuleManager.createCapsule(sanitizedPrompt, {
-     allowedActionCategories: inferredCategories,
+     allowedActionCategories: inferredCategories.length > 0 ? inferredCategories : undefined,
    });
    ```
+
+> **Deferred: "confirm before" pattern** — The `inferCategories` implementation does not yet handle
+> "confirm before" signals (e.g. "confirm before any action"). Full implementation requires wiring
+> `always_flag` for all actions from within the capsule creation path, which is a larger change.
+> Track as a follow-up: when "confirm before" is detected, set `allowedActionCategories: []` and
+> inject an `always_flag: ['*']` override into the policy for the duration of the task.
 
 ---
 
@@ -220,18 +230,25 @@ In the exact scenario where compaction is most dangerous — long-running, unatt
 
 **Fix:**
 1. Add `driftBlockingMode: 'advisory' | 'strict' | 'paranoid'` to `ZoraPolicy` config (default: `'strict'`).
-2. Wire into `createCanUseTool()` drift block:
+2. Wire into `createCanUseTool()` drift block.
+   Destructive category names must match `_classifyAction()` output:
    ```typescript
    if (!driftResult.consistent && !this._flagCallback) {
      if (this._driftBlockingMode === 'strict') {
-       const destructive = ['delete', 'write', 'bash', 'unknown'].includes(driftAction);
+       const destructive = [
+         'write_file', 'edit_file', 'shell_exec', 'shell_exec_destructive',
+         'git_push', 'git_operation', 'unknown',
+       ].includes(driftAction);
        if (destructive) {
+         log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift blocked (strict mode)');
          return { behavior: 'deny', message: `Goal drift blocked (strict): ${driftResult.reason}` };
        }
      } else if (this._driftBlockingMode === 'paranoid') {
+       log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift blocked (paranoid mode)');
        return { behavior: 'deny', message: `Goal drift blocked (paranoid): ${driftResult.reason}` };
      }
-     // advisory: log only (existing behavior)
+     // advisory, or strict with non-destructive action: log only
+     log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason, mode: this._driftBlockingMode }, 'Goal drift detected — allowing');
    }
    ```
 3. Expose in `policy.toml` under `[security]`:
@@ -248,11 +265,18 @@ This is the fastest fix. One config field + ~10 lines closes the headless enforc
 **Files:** `src/orchestrator/orchestrator.ts`, `src/security/intent-capsule.ts`
 **Severity:** S2
 
-The active capsule lives only in `IntentCapsuleManager._activeCapsule` (in-process memory). If the process crashes mid-task and restarts (failover path, `RetryQueue` replay, or daemon restart), the capsule is null. Drift detection silently disables itself — `checkDrift()` returns `{ consistent: true, confidence: 0 }` with no active capsule.
+The active capsule lives only in `IntentCapsuleManager._activeCapsule` (in-process memory). If the process crashes mid-task and restarts (`RetryQueue` replay or daemon restart), the capsule is null. Drift detection silently disables itself — `checkDrift()` returns `{ consistent: true, confidence: 0 }` with no active capsule.
 
-**Fix:**
+**Implemented (partial):** In-process provider failover is addressed — `_executeWithFailoverProvider()`
+serializes the active capsule before handing off to the next provider and restores it afterwards if
+the execution cleared it. This covers provider failover within the same process.
+
+**Deferred — persistent storage across process restarts:** Full ASI-03 requires:
 1. On `createCapsule()`, serialize the capsule to `ObservationStore` (or a dedicated `capsule-store`) keyed by `jobId`.
 2. In `_executeWithProvider()` failover/retry path, reload the capsule by `jobId` before continuing execution.
 3. On `clearCapsule()` (session end), delete the persisted entry.
 
-**Priority order for implementation:** ASI-02 → ASI-01 → ASI-03
+This persistent-storage path is not yet implemented. `RetryQueue` replay and daemon restart still
+lose the active capsule. Track as a follow-up issue.
+
+**Priority order for implementation:** ASI-02 → ASI-01 → ASI-03 (persistent storage)

@@ -648,8 +648,8 @@ export class PolicyEngine {
               log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift blocked (paranoid mode)');
               return { behavior: 'deny' as const, message: `Goal drift blocked (paranoid mode): ${driftResult.reason}` };
             }
-            // advisory: log only
-            log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason }, 'Goal drift detected (advisory mode, allowing)');
+            // advisory mode, or strict mode with a non-destructive action: log only
+            log.warn({ sessionId: this._sessionId, driftAction, reason: driftResult.reason, mode: this._driftBlockingMode }, 'Goal drift detected — allowing');
           }
         }
       }

@@ -795,7 +795,10 @@ export class Orchestrator {
     const capsuleSnapshot = this._intentCapsuleManager?.serializeActiveCapsule() ?? null;
     const result = await this._executeWithProvider(nextProvider, taskContext, onEvent, failoverDepth, injectionDepth, compressor);
     if (capsuleSnapshot && this._intentCapsuleManager && !this._intentCapsuleManager.getActiveCapsule()) {
-      this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
+      const restored = this._intentCapsuleManager.restoreCapsule(capsuleSnapshot);
+      if (!restored) {
+        log.warn({ jobId: taskContext.jobId }, 'Failed to restore intent capsule after failover — drift detection disabled for remainder of task');
+      }
     }
     return result;
   }
