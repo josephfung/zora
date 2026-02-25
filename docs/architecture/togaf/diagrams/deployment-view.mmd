@@ -1,0 +1,52 @@
+---
+title: Zora Deployment View
+---
+graph TB
+    subgraph UserMachine["User Machine (macOS / Linux)"]
+        subgraph ZoraProcess["zora-agent daemon (Node.js >= 20)"]
+            ORCH[Orchestrator]
+            DS[DashboardServer :8070]
+        end
+        subgraph CLITools["Authenticated CLI Tools"]
+            CSDK[claude — Anthropic Agent SDK]
+            GCLI[gemini — Google Gemini CLI]
+            OAPI[Ollama REST API :11434]
+        end
+        subgraph FileSystem["~/.zora/ (local disk)"]
+            CFG[config.toml]
+            POL[policy.toml]
+            AUD[audit/audit.jsonl]
+            SESS[sessions/*.jsonl]
+            MEMS[memory/]
+        end
+        subgraph Browser["User Browser"]
+            UI[React Dashboard localhost:8070]
+        end
+    end
+    subgraph Cloud["External Cloud Services (outbound only)"]
+        AAPI[Anthropic API
+api.anthropic.com]
+        GAPI[Google AI API
+generativelanguage.googleapis.com]
+        TAPI[Telegram Bot API
+api.telegram.org]
+    end
+    subgraph LocalAI["Local AI (no cloud egress)"]
+        OLLAMA_SVC[Ollama Service
+localhost:11434]
+        MODELS[Model Weights
+~/.ollama/models/]
+    end
+    ZoraProcess -->|subprocess| CSDK
+    ZoraProcess -->|subprocess| GCLI
+    ZoraProcess -->|HTTP| OAPI
+    CSDK -->|HTTPS| AAPI
+    GCLI -->|HTTPS| GAPI
+    ZoraProcess -->|long polling HTTPS| TAPI
+    OAPI --> OLLAMA_SVC
+    OLLAMA_SVC --> MODELS
+    ZoraProcess --> FileSystem
+    Browser -->|HTTP SSE :8070| DS
+    DS --> ZoraProcess
+    ZoraProcess -.->|reads| CFG
+    ZoraProcess -.->|reads| POL

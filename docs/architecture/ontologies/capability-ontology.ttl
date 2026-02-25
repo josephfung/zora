@@ -1,0 +1,302 @@
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix zora: <https://github.com/ryaker/zora/ontology#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Zora Agent Framework — Capability Ontology
+# Derived from: src/types.ts ProviderCapability (line 14)
+#               src/teams/team-types.ts AgentMember.capabilities (line 17)
+#               src/memory/memory-types.ts MemoryItemType (line 8)
+# ─────────────────────────────────────────────────────────────────────────────
+
+<https://github.com/ryaker/zora/ontology>
+    a owl:Ontology ;
+    dc:title "Zora Agent Capability Ontology" ;
+    dc:description "OWL ontology for Zora provider capabilities, memory types, agent roles, and routing classifications" ;
+    dc:creator "Zora Architecture Team" ;
+    dc:date "2026-02-25" ;
+    owl:versionInfo "1.0.0" .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Core Classes
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:Capability
+    a owl:Class ;
+    rdfs:label "Capability" ;
+    rdfs:comment "A capability tag that can be asserted by or required of an LLM provider. Derived from ProviderCapability type in src/types.ts:14." .
+
+zora:Provider
+    a owl:Class ;
+    rdfs:label "LLM Provider" ;
+    rdfs:comment "An LLM backend implementing the LLMProvider interface (src/types.ts:347). Subclasses correspond to KnownProviderType values." .
+
+zora:RoutingMode
+    a owl:Class ;
+    rdfs:label "Routing Mode" ;
+    rdfs:comment "Strategy for selecting among available providers. Derived from RoutingMode type in src/types.ts:32." .
+
+zora:CostTier
+    a owl:Class ;
+    rdfs:label "Cost Tier" ;
+    rdfs:comment "Cost classification for a provider. Derived from CostTier type in src/types.ts:27." .
+
+zora:MemoryType
+    a owl:Class ;
+    rdfs:label "Memory Item Type" ;
+    rdfs:comment "Classification of a structured memory item. Derived from MemoryItemType in src/memory/memory-types.ts:8." .
+
+zora:AgentRole
+    a owl:Class ;
+    rdfs:label "Agent Role" ;
+    rdfs:comment "Role of an agent in a multi-agent team. Derived from AgentMember in src/teams/team-types.ts:9." .
+
+zora:AuditEventType
+    a owl:Class ;
+    rdfs:label "Audit Event Type" ;
+    rdfs:comment "Classification of an audit log entry. Derived from AuditEntryEventType in src/security/security-types.ts:15." .
+
+zora:PolicySection
+    a owl:Class ;
+    rdfs:label "Policy Section" ;
+    rdfs:comment "A section of the ZoraPolicy configuration. Derived from ZoraPolicy interface in src/types.ts:682." .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Provider Capability Individuals
+# Derived from src/types.ts:14-25 ProviderCapability
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:ReasoningCapability
+    a owl:NamedIndividual, zora:Capability ;
+    rdfs:label "reasoning" ;
+    rdfs:comment "Provider can perform complex reasoning, analysis, and multi-step problem solving. Claude is the primary reasoning provider." ;
+    zora:sourceType "src/types.ts:ProviderCapability" ;
+    zora:keywordsFor "analyze, explain, design, compare, evaluate, why, how does, critique" .
+
+zora:CodingCapability
+    a owl:NamedIndividual, zora:Capability ;
+    rdfs:label "coding" ;
+    rdfs:comment "Provider excels at code generation, debugging, and refactoring. Router.CODING_KEYWORDS drives selection." ;
+    zora:sourceType "src/types.ts:ProviderCapability" ;
+    zora:keywordsFor "code, refactor, fix bug, implement, function, class, compile, debug" .
+
+zora:CreativeCapability
+    a owl:NamedIndividual, zora:Capability ;
+    rdfs:label "creative" ;
+    rdfs:comment "Provider can produce creative text, stories, blog posts, and essays." ;
+    zora:sourceType "src/types.ts:ProviderCapability" ;
+    zora:keywordsFor "write, blog, creative, story, poem, essay, draft" .
+
+zora:StructuredDataCapability
+    a owl:NamedIndividual, zora:Capability ;
+    rdfs:label "structured-data" ;
+    rdfs:comment "Provider can parse, transform, and generate JSON, CSV, and other structured formats." ;
+    zora:sourceType "src/types.ts:ProviderCapability" ;
+    zora:keywordsFor "json, csv, extract, parse, transform data, format" .
+
+zora:LargeContextCapability
+    a owl:NamedIndividual, zora:Capability ;
+    rdfs:label "large-context" ;
+    rdfs:comment "Provider supports large context windows for processing long documents or conversation histories." ;
+    zora:sourceType "src/types.ts:ProviderCapability" .
+
+zora:SearchCapability
+    a owl:NamedIndividual, zora:Capability ;
+    rdfs:label "search" ;
+    rdfs:comment "Provider can perform web search or retrieval-augmented generation." ;
+    zora:sourceType "src/types.ts:ProviderCapability" ;
+    zora:keywordsFor "search, find, research, look up, lookup, discover" .
+
+zora:FastCapability
+    a owl:NamedIndividual, zora:Capability ;
+    rdfs:label "fast" ;
+    rdfs:comment "Provider prioritizes low latency over reasoning depth. Suitable for simple tasks requiring quick response." ;
+    zora:sourceType "src/types.ts:ProviderCapability" .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Provider Individuals
+# Derived from KnownProviderType in src/types.ts:341
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:ClaudeSDKProvider
+    a owl:NamedIndividual, zora:Provider ;
+    rdfs:label "Claude (claude-sdk)" ;
+    rdfs:comment "Anthropic Claude via Agent SDK. Implementation: src/providers/claude-provider.ts" ;
+    zora:implementedIn "src/providers/claude-provider.ts" ;
+    zora:hasCapability zora:ReasoningCapability, zora:CodingCapability, zora:CreativeCapability, zora:StructuredDataCapability, zora:LargeContextCapability ;
+    zora:costTier zora:IncludedTier ;
+    zora:typeName "claude-sdk" .
+
+zora:GeminiCLIProvider
+    a owl:NamedIndividual, zora:Provider ;
+    rdfs:label "Gemini (gemini-cli)" ;
+    rdfs:comment "Google Gemini via CLI subprocess. Implementation: src/providers/gemini-provider.ts" ;
+    zora:implementedIn "src/providers/gemini-provider.ts" ;
+    zora:hasCapability zora:ReasoningCapability, zora:SearchCapability, zora:LargeContextCapability ;
+    zora:costTier zora:FreeTier ;
+    zora:typeName "gemini-cli" .
+
+zora:OllamaProvider
+    a owl:NamedIndividual, zora:Provider ;
+    rdfs:label "Ollama (ollama)" ;
+    rdfs:comment "Local model via Ollama REST API at localhost:11434. Implementation: src/providers/ollama-provider.ts" ;
+    zora:implementedIn "src/providers/ollama-provider.ts" ;
+    zora:hasCapability zora:CodingCapability, zora:FastCapability, zora:CreativeCapability ;
+    zora:costTier zora:FreeTier ;
+    zora:typeName "ollama" .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cost Tier Individuals
+# Derived from CostTier in src/types.ts:27
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:FreeTier
+    a owl:NamedIndividual, zora:CostTier ;
+    rdfs:label "free" ;
+    rdfs:comment "Zero marginal cost. Gemini CLI and Ollama providers." ;
+    zora:costRank 0 .
+
+zora:IncludedTier
+    a owl:NamedIndividual, zora:CostTier ;
+    rdfs:label "included" ;
+    rdfs:comment "Included in existing subscription. Claude Code subscription." ;
+    zora:costRank 1 .
+
+zora:MeteredTier
+    a owl:NamedIndividual, zora:CostTier ;
+    rdfs:label "metered" ;
+    rdfs:comment "Per-token or per-request billing. Future providers with direct API keys." ;
+    zora:costRank 2 .
+
+zora:PremiumTier
+    a owl:NamedIndividual, zora:CostTier ;
+    rdfs:label "premium" ;
+    rdfs:comment "Highest cost tier. Reserved for premium model variants or specialized services." ;
+    zora:costRank 3 .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routing Mode Individuals
+# Derived from RoutingMode in src/types.ts:32
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:RespectRankingMode
+    a owl:NamedIndividual, zora:RoutingMode ;
+    rdfs:label "respect_ranking" ;
+    rdfs:comment "Select highest-ranked capable provider. Default mode. Implementation: src/orchestrator/router.ts" .
+
+zora:OptimizeCostMode
+    a owl:NamedIndividual, zora:RoutingMode ;
+    rdfs:label "optimize_cost" ;
+    rdfs:comment "Select lowest-cost capable provider. Prefers free > included > metered > premium." .
+
+zora:ProviderOnlyMode
+    a owl:NamedIndividual, zora:RoutingMode ;
+    rdfs:label "provider_only" ;
+    rdfs:comment "Force a specific named provider. Used for testing and provider-locked routines." .
+
+zora:RoundRobinMode
+    a owl:NamedIndividual, zora:RoutingMode ;
+    rdfs:label "round_robin" ;
+    rdfs:comment "Distribute tasks across all available providers in rotation." .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Memory Item Type Individuals
+# Derived from MemoryItemType in src/memory/memory-types.ts:8
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:ProfileMemoryType
+    a owl:NamedIndividual, zora:MemoryType ;
+    rdfs:label "profile" ;
+    rdfs:comment "User profile facts: name, preferences, goals, background." .
+
+zora:EventMemoryType
+    a owl:NamedIndividual, zora:MemoryType ;
+    rdfs:label "event" ;
+    rdfs:comment "Significant events that occurred during agent sessions." .
+
+zora:KnowledgeMemoryType
+    a owl:NamedIndividual, zora:MemoryType ;
+    rdfs:label "knowledge" ;
+    rdfs:comment "Domain knowledge and facts extracted from conversations and tool outputs." .
+
+zora:BehaviorMemoryType
+    a owl:NamedIndividual, zora:MemoryType ;
+    rdfs:label "behavior" ;
+    rdfs:comment "Observed user behavioral patterns and working style preferences." .
+
+zora:SkillMemoryType
+    a owl:NamedIndividual, zora:MemoryType ;
+    rdfs:label "skill" ;
+    rdfs:comment "Reusable procedures and approaches that the agent has learned." .
+
+zora:ToolMemoryType
+    a owl:NamedIndividual, zora:MemoryType ;
+    rdfs:label "tool" ;
+    rdfs:comment "Information about external tools, APIs, and integrations." .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Object Properties
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:hasCapability
+    a owl:ObjectProperty ;
+    rdfs:domain zora:Provider ;
+    rdfs:range zora:Capability ;
+    rdfs:label "has capability" ;
+    rdfs:comment "Asserts that a provider possesses a given capability tag for routing purposes." .
+
+zora:requiresCapability
+    a owl:ObjectProperty ;
+    rdfs:domain zora:Provider ;
+    rdfs:range zora:Capability ;
+    rdfs:label "requires capability" ;
+    rdfs:comment "A task requiring this capability will be routed to providers that have it." .
+
+zora:costTier
+    a owl:ObjectProperty ;
+    rdfs:domain zora:Provider ;
+    rdfs:range zora:CostTier ;
+    rdfs:label "cost tier" ;
+    rdfs:comment "The cost classification of a provider, used in optimize_cost routing mode." .
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Datatype Properties
+# ─────────────────────────────────────────────────────────────────────────────
+
+zora:implementedIn
+    a owl:DatatypeProperty ;
+    rdfs:domain zora:Provider ;
+    rdfs:range xsd:string ;
+    rdfs:label "implemented in" ;
+    rdfs:comment "Source file path where this provider is implemented." .
+
+zora:typeName
+    a owl:DatatypeProperty ;
+    rdfs:domain zora:Provider ;
+    rdfs:range xsd:string ;
+    rdfs:label "type name" ;
+    rdfs:comment "The KnownProviderType string used in config.toml [[providers]] type field." .
+
+zora:costRank
+    a owl:DatatypeProperty ;
+    rdfs:domain zora:CostTier ;
+    rdfs:range xsd:integer ;
+    rdfs:label "cost rank" ;
+    rdfs:comment "Numeric ranking for cost comparison: 0=free, 1=included, 2=metered, 3=premium. Matches Router.COST_ORDER in src/orchestrator/router.ts." .
+
+zora:keywordsFor
+    a owl:DatatypeProperty ;
+    rdfs:domain zora:Capability ;
+    rdfs:range xsd:string ;
+    rdfs:label "keywords for" ;
+    rdfs:comment "Comma-separated keywords from Router static arrays that trigger routing to providers with this capability." .
+
+zora:sourceType
+    a owl:DatatypeProperty ;
+    rdfs:range xsd:string ;
+    rdfs:label "source type" ;
+    rdfs:comment "Reference to the TypeScript type that defines this individual." .

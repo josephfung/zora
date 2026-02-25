@@ -1,0 +1,60 @@
+---
+title: Zora Security Flow — Task Submission to Execution
+---
+sequenceDiagram
+    actor User
+    participant ORCH as Orchestrator
+    participant IC as IntentCapsuleManager
+    participant ROUTER as Router
+    participant PE as PolicyEngine
+    participant AL as AuditLogger
+    participant LD as LeakDetector
+    participant PD as PromptDefense
+    participant EL as ExecutionLoop
+    participant LLM as LLM Provider
+
+    User->>ORCH: submitTask(prompt, options)
+    ORCH->>PD: sanitizeInput(prompt)
+    PD-->>ORCH: sanitized prompt or quarantine tag
+    ORCH->>IC: createCapsule(mandate)
+    IC-->>ORCH: IntentCapsule with HMAC-SHA256 signature
+    ORCH->>AL: log(task.start, jobId, prompt)
+    AL-->>ORCH: AuditEntry with hash chain link
+
+    ORCH->>ROUTER: selectProvider(taskContext)
+    ROUTER-->>ORCH: LLMProvider (ranked by capability + cost)
+
+    ORCH->>EL: run(provider, taskContext, canUseTool)
+    EL->>LLM: execute(taskContext) streaming
+
+    loop For each tool call
+        LLM-->>EL: ToolCallEvent(name, args)
+        EL->>PE: canUseTool(toolName, toolInput)
+        PE->>PE: validatePath / validateCommand / checkBudget
+        alt Policy DENIED
+            PE-->>EL: denied + reason
+            EL->>AL: log(policy.deny, toolName, reason)
+            EL-->>LLM: ToolResult(error: policy denied)
+        else Policy ALLOWED
+            PE->>IC: checkDrift(action, capsule)
+            alt Drift DETECTED (strict/paranoid mode)
+                IC-->>PE: driftResult.blocked=true
+                PE-->>EL: denied + drift reason
+                EL->>AL: log(policy.deny, drift)
+            else No Drift
+                IC-->>PE: driftResult.blocked=false
+                PE-->>EL: allowed
+                EL->>AL: log(tool.call, toolName, args)
+                EL->>EL: execute tool
+                EL->>LD: scan(toolOutput)
+                LD-->>EL: LeakMatch[] (redact if found)
+                EL->>AL: log(tool.result, toolName, result)
+                EL-->>LLM: ToolResult(output)
+            end
+        end
+    end
+
+    LLM-->>EL: DoneEvent(text)
+    EL->>AL: log(task.end, jobId, exitCode)
+    EL-->>ORCH: jobId
+    ORCH-->>User: jobId (stream via SSE or return)

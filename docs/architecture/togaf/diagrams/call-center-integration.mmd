@@ -1,0 +1,58 @@
+---
+title: Call Center Integration Flow (DirecTV / Inbound IVR)
+---
+flowchart TD
+    CALL([Inbound Call
+Customer Dials Support]) --> IVR[IVR / ACD System
+Skill-based routing]
+    IVR -->|route to AI queue| ZORA_ENTRY[Zora Agent
+zora-agent start --preset call-center]
+    ZORA_ENTRY --> SANITIZE[PromptDefense.sanitizeInput
+src/security/prompt-defense.ts
+strip injection patterns]
+    SANITIZE --> CAPSULE[IntentCapsuleManager.createCapsule
+src/security/intent-capsule.ts
+HMAC-SHA256 sign mandate]
+    CAPSULE --> AUDIT_START[AuditLogger.log task.start
+src/security/audit-logger.ts
+SHA-256 chain entry]
+    AUDIT_START --> ROUTER[Router.selectProvider
+src/orchestrator/router.ts
+capability: reasoning+fast]
+    ROUTER -->|cost:included cap| CLAUDE[ClaudeProvider
+claude-sdk]
+    ROUTER -->|cost:free fallback| GEMINI[GeminiProvider
+gemini-cli]
+    ROUTER -->|local fallback| OLLAMA[OllamaProvider
+localhost:11434]
+    CLAUDE --> POLICY[PolicyEngine.canUseTool
+src/security/policy-engine.ts
+per-tool gate]
+    GEMINI --> POLICY
+    OLLAMA --> POLICY
+    POLICY -->|DENIED| AUDIT_DENY[AuditLogger.log policy.deny
+reason recorded in chain]
+    POLICY -->|ALLOWED| DRIFT[IntentCapsuleManager.checkDrift
+goal alignment verification]
+    DRIFT -->|drift blocked| ESCALATE
+    DRIFT -->|aligned| TOOLS[Tool Execution
+CRM lookup / KB search / account query]
+    TOOLS --> LEAK[LeakDetector.scan
+src/security/leak-detector.ts
+redact PII / secrets]
+    LEAK --> AUDIT_TOOL[AuditLogger.log tool.call + tool.result]
+    AUDIT_TOOL --> RESPONSE[Agent Response
+streamed to IVR / agent desktop]
+    RESPONSE --> DONE{Resolved?}
+    DONE -->|Yes| AUDIT_END[AuditLogger.log task.end
+session persisted to sessions/jobId.jsonl]
+    DONE -->|No / complex| ESCALATE[Escalate to Human Agent
+HandoffBundle generated
+src/types.ts HandoffBundle]
+    ESCALATE --> HUMAN[Human Agent
+receives conversation context]
+    AUDIT_END --> SESSION[SessionManager
+sessions/jobId.jsonl JSONL]
+    SESSION --> SIEM_EXPORT[SIEM Export
+audit.jsonl structured events]
+    HUMAN --> CRM_UPDATE[CRM Update]

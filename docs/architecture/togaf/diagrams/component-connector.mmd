@@ -1,0 +1,200 @@
+---
+title: Zora Agent Framework Component-Connector View
+---
+graph LR
+    subgraph CLI
+        CIDX[src/cli/index.ts Commander.js]
+        DAEMON[src/cli/daemon.ts daemon mode]
+        DOCTOR[src/cli/doctor.ts health check]
+    end
+    subgraph Core[Core Orchestration]
+        ORCH[Orchestrator
+orchestrator.ts
+boot / shutdown / submitTask]
+        ROUTER[Router
+router.ts
+capability+cost ranking]
+        FC[FailoverController
+failover-controller.ts
+circuit breaker]
+        RQ[RetryQueue
+retry-queue.ts
+exponential backoff]
+        AM[AuthMonitor
+auth-monitor.ts
+token health polling]
+        SM[SessionManager
+session-manager.ts
+JSONL buffered writer]
+        EL[ExecutionLoop
+execution-loop.ts
+SDK turn loop]
+        EPD[ErrorPatternDetector
+error-pattern-detector.ts]
+    end
+    subgraph Providers
+        CP[ClaudeProvider
+claude-provider.ts
+claude-sdk]
+        GP[GeminiProvider
+gemini-provider.ts
+gemini-cli subprocess]
+        OP[OllamaProvider
+ollama-provider.ts
+REST /api/chat]
+        CB[CircuitBreaker
+circuit-breaker.ts
+CLOSED/OPEN/HALF_OPEN]
+    end
+    subgraph Security
+        PE[PolicyEngine
+policy-engine.ts
+path+cmd+budget]
+        AL[AuditLogger
+audit-logger.ts
+SHA-256 JSONL]
+        ICM[IntentCapsuleManager
+intent-capsule.ts
+HMAC-SHA256]
+        LD[LeakDetector
+leak-detector.ts
+regex patterns]
+        PD[PromptDefense
+prompt-defense.ts
+injection sanitize]
+        IG[IntegrityGuardian
+integrity-guardian.ts
+SHA-256 baselines]
+        CT[CapabilityTokens
+capability-tokens.ts
+scoped tokens]
+        SV[ShellValidator
+shell-validator.ts
+tokenize+split]
+    end
+    subgraph Memory
+        MM[MemoryManager
+memory-manager.ts
+Tier1+2+3]
+        SM2[StructuredMemory
+structured-memory.ts
+items JSON]
+        SS[SalienceScorer
+salience-scorer.ts
+access+recency]
+        CO[CategoryOrganizer
+category-organizer.ts]
+        EP[ExtractionPipeline
+extraction-pipeline.ts
+schema-guided]
+        CC[ContextCompressor
+context-compressor.ts]
+        VP[ValidationPipeline
+validation-pipeline.ts]
+        OS[ObservationStore
+observation-store.ts]
+    end
+    subgraph Steering
+        STM[SteeringManager
+steering-manager.ts]
+        TG[TelegramGateway
+telegram-gateway.ts]
+        SI[SteerInjector
+steer-injector.ts]
+        FM[FlagManager
+flag-manager.ts]
+    end
+    subgraph Teams
+        TM[TeamManager
+team-manager.ts]
+        MB[Mailbox
+mailbox.ts
+filesystem inbox]
+        AL2[AgentLoader
+agent-loader.ts]
+        GB[GeminiBridge
+gemini-bridge.ts
+subprocess bridge]
+        PR[PrLifecycle
+pr-lifecycle.ts]
+    end
+    subgraph Dashboard
+        DS[DashboardServer
+server.ts
+Express]
+        AUTH[AuthMiddleware
+auth-middleware.ts
+Bearer token]
+    end
+    subgraph Routines
+        RM[RoutineManager
+routine-manager.ts
+node-cron]
+        HB[HeartbeatSystem
+heartbeat.ts]
+        ET[EventTriggers
+event-triggers.ts]
+    end
+    subgraph Hooks
+        HR[HookRunner
+hook-runner.ts]
+        HT[HookTypes
+hook-types.ts]
+    end
+    subgraph Config
+        CL[ConfigLoader
+loader.ts]
+        PL[PolicyLoader
+policy-loader.ts]
+        DEF[Defaults
+defaults.ts]
+    end
+    CIDX --> ORCH
+    DAEMON --> ORCH
+    ORCH --> ROUTER
+    ORCH --> FC
+    ORCH --> RQ
+    ORCH --> AM
+    ORCH --> SM
+    ORCH --> EL
+    ORCH --> EPD
+    ORCH --> PE
+    ORCH --> AL
+    ORCH --> ICM
+    ORCH --> LD
+    ORCH --> PD
+    ORCH --> MM
+    ORCH --> STM
+    ORCH --> RM
+    ORCH --> HR
+    ORCH --> DS
+    ORCH --> TM
+    ROUTER --> CP
+    ROUTER --> GP
+    ROUTER --> OP
+    CP --> CB
+    GP --> CB
+    OP --> CB
+    FC --> ROUTER
+    MM --> SM2
+    MM --> SS
+    MM --> CO
+    MM --> EP
+    MM --> CC
+    MM --> VP
+    MM --> OS
+    STM --> TG
+    STM --> SI
+    STM --> FM
+    DS --> AUTH
+    TM --> MB
+    TM --> AL2
+    TM --> GB
+    TM --> PR
+    RM --> HB
+    RM --> ET
+    HR --> HT
+    CL --> DEF
+    PL --> DEF
+    ORCH -.->|reads| CL
+    PE -.->|reads| PL

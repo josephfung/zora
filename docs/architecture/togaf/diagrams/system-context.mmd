@@ -1,0 +1,60 @@
+---
+title: Zora Agent Framework System Context C4 Level 1
+---
+graph TB
+    subgraph Users
+        U1[End User CLI Browser]
+        U2[Telegram Bot Channel]
+    end
+    subgraph LLMProviders
+        CLAUDE[Claude claude-sdk Anthropic Agent SDK cost:included]
+        GEMINI[Gemini gemini-cli Google Workspace CLI cost:free]
+        OLLAMA[Ollama REST localhost:11434 Local Models cost:free]
+    end
+    subgraph HumanOversight
+        DASH[Dashboard UI localhost:8070 React SSE]
+        STEER[Steering Injection real-time mid-task]
+    end
+    subgraph Zora
+        ORCH[Orchestrator src/orchestrator/orchestrator.ts central controller]
+        ROUTER[Router src/orchestrator/router.ts capability routing]
+        PE[PolicyEngine src/security/policy-engine.ts canUseTool gate]
+        AUDIT[AuditLogger src/security/audit-logger.ts SHA-256 hash chain]
+        MEM[MemoryManager src/memory/memory-manager.ts 3-tier salience]
+        SM[SessionManager src/orchestrator/session-manager.ts JSONL]
+        TG[TelegramGateway src/steering/telegram-gateway.ts long-polling]
+        DS[DashboardServer src/dashboard/server.ts Express SSE]
+        IC[IntentCapsuleManager src/security/intent-capsule.ts HMAC drift]
+        FC[FailoverController src/orchestrator/failover-controller.ts circuit]
+    end
+    subgraph Storage
+        FS_AUDIT[audit/audit.jsonl append-only SHA-256 chain]
+        FS_SESS[sessions/jobId.jsonl per-task event stream]
+        FS_MEM[memory/MEMORY.md plus items/ plus categories/]
+        FS_POL[policy.toml filesystem shell budget]
+        FS_CFG[config.toml providers routing memory]
+    end
+    U1 -->|task prompts CLI| ORCH
+    U2 -->|bot messages| TG
+    TG -->|steer injection| ORCH
+    U1 -->|browser SSE| DS
+    DASH -->|POST /api/task| ORCH
+    ORCH --> ROUTER
+    ROUTER -->|capability plus cost rank| CLAUDE
+    ROUTER -->|capability plus cost rank| GEMINI
+    ROUTER -->|capability plus cost rank| OLLAMA
+    ORCH --> FC
+    FC -->|failover handoff| ROUTER
+    ORCH --> PE
+    ORCH --> AUDIT
+    ORCH --> MEM
+    ORCH --> SM
+    ORCH --> IC
+    DS -.->|SSE /api/events| DASH
+    PE -.->|canUseTool gate| ORCH
+    IC -.->|drift check| ORCH
+    AUDIT --> FS_AUDIT
+    SM --> FS_SESS
+    MEM --> FS_MEM
+    PE -.->|reads| FS_POL
+    ORCH -.->|reads| FS_CFG
