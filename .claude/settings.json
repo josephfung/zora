@@ -258,7 +258,7 @@
           {
             "type": "command",
             "timeout": 2000,
-            "command": "npx ruvector@latest hooks pre-command \"$TOOL_INPUT_command\" 2>/dev/null || true"
+            "command": "RUVECTOR_CMD=\"$TOOL_INPUT_command\" npx ruvector@latest hooks pre-command 2>/dev/null || true"
           }
         ]
       },
@@ -310,7 +310,7 @@
           {
             "type": "command",
             "timeout": 2000,
-            "command": "npx ruvector@latest hooks post-command \"$TOOL_INPUT_command\" 2>/dev/null || true"
+            "command": "RUVECTOR_CMD=\"$TOOL_INPUT_command\" npx ruvector@latest hooks post-command 2>/dev/null || true"
           }
         ]
       }
@@ -358,12 +358,12 @@
           {
             "type": "command",
             "timeout": 2000,
-            "command": "npx agentic-flow@alpha workers dispatch-prompt \"$CLAUDE_USER_PROMPT\" 2>/dev/null || true"
+            "command": "AGENTIC_PROMPT=\"$CLAUDE_USER_PROMPT\" npx agentic-flow@alpha workers dispatch-prompt 2>/dev/null || true"
           },
           {
             "type": "command",
             "timeout": 1000,
-            "command": "npx agentic-flow@alpha workers inject-context \"$CLAUDE_USER_PROMPT\" 2>/dev/null || true"
+            "command": "AGENTIC_PROMPT=\"$CLAUDE_USER_PROMPT\" npx agentic-flow@alpha workers inject-context 2>/dev/null || true"
           }
         ]
       }
