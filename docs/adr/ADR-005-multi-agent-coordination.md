@@ -6,7 +6,7 @@
 
 ## Context
 
-Zora v0.6 introduces multi-agent teams for tasks that benefit from parallelism and specialization: PR review (one agent per changed file), code audit (security agent + style agent), and research tasks (researcher + synthesizer). The coordination model must:
+Zora supports multi-agent teams for tasks that benefit from parallelism and specialization: PR review (one agent per changed file), code audit (security agent + style agent), and research tasks (researcher + synthesizer). The coordination model must:
 
 1. Support heterogeneous agent types (Claude agents and Gemini agents in the same team).
 2. Avoid shared mutable state that would create race conditions.
