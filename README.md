@@ -60,11 +60,15 @@ User says something → LLM decides what to do → PolicyEngine checks policy.to
 
 The LLM cannot talk the PolicyEngine into ignoring policy.toml. They don't share a channel.
 
-### 3. No Skill Registry
+### 3. No Centralized Skill Marketplace
 
-OpenClaw has ClawHub — a marketplace of third-party skills. 20% of that registry was found delivering malware. Zora has no skill registry. There is no third-party code that gets downloaded and executed by the agent. Zora's capabilities come from its built-in tools and the projects you explicitly configure.
+OpenClaw has ClawHub — a centralized registry where third-party skills are auto-discovered and installed. Security researchers found 800+ malicious skills (~20% of the registry) delivering malware. The centralized model means one poisoned registry affects every user.
 
-**What this means:** There's no supply chain attack surface.
+Zora supports skills, but there is no ClawHub equivalent. Skills are local files you install yourself — you control what you add and when. There's no background auto-update pulling code from a shared registry.
+
+**What this means:** You can't poison a registry that doesn't exist. The supply chain attack surface scales with your own choices, not with a marketplace serving 180,000 users.
+
+> **Roadmap:** Skill scanning (static analysis of skill files before install) is on the roadmap. Not built yet — worth knowing.
 
 ### 4. Action Budget
 
