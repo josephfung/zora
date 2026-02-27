@@ -69,6 +69,11 @@ test.afterAll(async () => {
 // ─── 1. Page Load Journey ────────────────────────────────────────────
 
 test.describe('Page Load Journey', () => {
+  test.beforeEach(async ({ page }) => {
+    // Dismiss the WelcomeOnboarding overlay so visibility assertions are not blocked
+    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
+  });
+
   test('dashboard loads with correct title', async ({ page }) => {
     await page.goto(baseUrl);
     await expect(page).toHaveTitle(/Zora — Tactical Interface/);

@@ -41,6 +41,7 @@ test.describe('Zora Tactical Dashboard', () => {
   });
 
   test('loads the tactical interface', async ({ page }) => {
+    await page.addInitScript(() => { localStorage.setItem('zora_onboarding_complete', 'true'); });
     await page.goto(`http://localhost:${port}`);
     await expect(page).toHaveTitle(/Zora — Tactical Interface/);
     await expect(page.locator('text=ZORA / DASHBOARD')).toBeVisible();
