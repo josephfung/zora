@@ -42,7 +42,7 @@ Derived from actual imports in src/orchestrator/orchestrator.ts and src/types.ts
 | **Gemini Backend** | GeminiProvider | src/providers/gemini-provider.ts | LLMProvider | gemini-cli subprocess wrapper; stdout streaming parser |
 | **Ollama Backend** | OllamaProvider | src/providers/ollama-provider.ts | LLMProvider | Ollama REST API client; /api/chat streaming |
 | **Circuit Breaker** | CircuitBreaker | src/providers/circuit-breaker.ts | CircuitBreakerOptions | CLOSED/OPEN/HALF_OPEN state machine; failure threshold + cooldown |
-| **Dashboard Server** | DashboardServer | src/dashboard/server.ts | DashboardOptions | Express REST API + SSE event stream; localhost:8070 |
+| **Dashboard Server** | DashboardServer | src/dashboard/server.ts | DashboardOptions | Express REST API + SSE event stream; port configurable via `steering.dashboard_port` in config.toml (default 8070) |
 | **Auth Middleware** | createAuthMiddleware | src/dashboard/auth-middleware.ts | --- | Bearer token validation for dashboard API routes |
 | **Telegram Gateway** | TelegramGateway | src/steering/telegram-gateway.ts | TelegramConfig | Long-polling Telegram Bot API; injects steer messages |
 | **Steering Manager** | SteeringManager | src/steering/steering-manager.ts | --- | Routes steering commands to active execution loops |

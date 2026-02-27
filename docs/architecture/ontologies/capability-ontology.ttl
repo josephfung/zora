@@ -251,10 +251,9 @@ zora:hasCapability
 
 zora:requiresCapability
     a owl:ObjectProperty ;
-    rdfs:domain zora:Provider ;
     rdfs:range zora:Capability ;
     rdfs:label "requires capability" ;
-    rdfs:comment "A task requiring this capability will be routed to providers that have it." .
+    rdfs:comment "Capability requirement used by task/routing constraints; providers satisfy it via zora:hasCapability." .
 
 zora:costTier
     a owl:ObjectProperty ;

@@ -24,18 +24,13 @@ graph TB
         end
     end
     subgraph Cloud["External Cloud Services (outbound only)"]
-        AAPI[Anthropic API
-api.anthropic.com]
-        GAPI[Google AI API
-generativelanguage.googleapis.com]
-        TAPI[Telegram Bot API
-api.telegram.org]
+        AAPI[Anthropic API<br/>api.anthropic.com]
+        GAPI[Google AI API<br/>generativelanguage.googleapis.com]
+        TAPI[Telegram Bot API<br/>api.telegram.org]
     end
     subgraph LocalAI["Local AI (no cloud egress)"]
-        OLLAMA_SVC[Ollama Service
-localhost:11434]
-        MODELS[Model Weights
-~/.ollama/models/]
+        OLLAMA_SVC[Ollama Service<br/>localhost:11434]
+        MODELS[Model Weights<br/>~/.ollama/models/]
     end
     ZoraProcess -->|subprocess| CSDK
     ZoraProcess -->|subprocess| GCLI

@@ -54,7 +54,7 @@ The NIST AI RMF organizes AI risk management into four core functions:
 | MS-1.1 | Metrics for AI risk are identified | AuditLogger event types (policy.allow, policy.deny, tool.call, tool.result, failover, steer) provide quantifiable metrics for risk monitoring | src/security/security-types.ts:15 AuditEntryEventType |
 | MS-2.1 | AI risk is measured | AuditLogger.verifyChain() provides integrity measurement. PolicyEngine._actionCounts + _totalActions + _tokensUsed provide consumption metrics. BudgetStatus reports real-time budget utilization | src/security/audit-logger.ts:113, src/security/policy-engine.ts, src/security/security-types.ts:77 BudgetStatus |
 | MS-2.3 | AI system performance is monitored | AuthMonitor polls LLMProvider.checkAuth() and LLMProvider.getQuotaStatus() on schedule. ErrorPatternDetector aggregates failure patterns across execution loops | src/orchestrator/auth-monitor.ts, src/orchestrator/error-pattern-detector.ts |
-| MS-2.5 | Feedback processes are defined | SalienceScorer.access_count and last_accessed fields track memory retrieval feedback. reinforcement_score field in MemoryItem tracks item quality over time | src/memory/salience-scorer.ts, src/memory/memory-types.ts:10 |
+| MS-2.5 | Feedback processes are defined | `SalienceScorer.access_count` and `last_accessed` fields track memory retrieval feedback. `reinforcement_score` field in MemoryItem tracks item quality over time | src/memory/salience-scorer.ts, src/memory/memory-types.ts:10 |
 | MS-2.8 | Risk assessment results are used to improve AI system | FailoverController classifyError() results inform router weight adjustments. ErrorPatternDetector outputs feed CircuitBreaker thresholds | src/orchestrator/failover-controller.ts, src/orchestrator/error-pattern-detector.ts |
 | MS-3.1 | Test sets are developed | Vitest unit tests in tests/ directory cover policy engine, audit logger, intent capsule, failover controller, router, memory manager | vitest.config.ts, tests/ |
 | MS-4.1 | Risks are tracked over time | AuditLogger JSONL provides time-series record of all events. Entries are timestamped (ISO 8601) and hash-chained for tamper evidence | src/security/audit-logger.ts |
@@ -84,7 +84,7 @@ The NIST AI RMF organizes AI risk management into four core functions:
 | MEASURE | MS-1.1, MS-2.1, MS-2.3, MS-2.5, MS-3.1, MS-4.1 | Managed (Level 3) | Comprehensive metrics; feedback loops established; monitoring active |
 | MANAGE | MG-1.1, MG-2.1, MG-2.2, MG-2.4, MG-3.1, MG-3.2, MG-4.1 | Managed (Level 3) | Full risk response stack implemented; learning loops closing |
 
-Maturity Levels: Initial (1) - Repeatable (2) - Defined (2) - Managed (3) - Optimizing (4)
+Maturity Levels: Initial (1) - Repeatable (2) - Defined (3) - Managed (4) - Optimizing (5)
 
 ---
 

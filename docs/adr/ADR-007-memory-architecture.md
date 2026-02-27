@@ -40,7 +40,7 @@ Implement a three-tier memory architecture:
 
 - **Format**: JSON files at ~/.zora/memory/items/<id>.json, one per MemoryItem.
 - **Types**: profile, event, knowledge, behavior, skill, tool (MemoryItemType, src/memory/memory-types.ts:8).
-- **Salience scoring**: SalienceScorer combines access_count, recency decay, relevance to current task, and source trust bonus (src/memory/salience-scorer.ts). Scoring formula: score = accessWeight * access_count_log + recencyDecay * days_since_access + relevanceScore + sourceTrustBonus.
+- **Salience scoring**: SalienceScorer combines access_count, recency decay, relevance to current task, and source trust bonus (src/memory/salience-scorer.ts). Scoring formula: `score = accessWeight * access_count_log + recencyDecay * days_since_access + relevanceScore + sourceTrustBonus`.
 - **Category organization**: CategoryOrganizer groups items into named categories with summaries (src/memory/category-organizer.ts). Category summaries are stored in memory/categories/<category>.json.
 - **Injection**: Top-K items by salience score are injected into task context.
 - **Extraction**: ExtractionPipeline (src/memory/extraction-pipeline.ts) uses an LLM call to extract structured MemoryItems from conversation text, with ValidationPipeline validation (src/memory/validation-pipeline.ts) and deduplication (DEDUP_THRESHOLD: 0.8 cosine similarity).
@@ -54,7 +54,7 @@ ContextCompressor (src/memory/context-compressor.ts) compresses the assembled co
 
 ### Proactive Extraction
 
-After task completion, ObservationStore (src/memory/observation-store.ts) collects conversation messages and tool outputs. ObserverWorker and ReflectorWorker (src/memory/observer-worker.ts, reflector-worker.ts) process observations asynchronously: ObserverWorker creates raw ObservationStore entries; ReflectorWorker synthesizes patterns into new MemoryItems via ExtractionPipeline.
+After task completion, ObservationStore (src/memory/observation-store.ts) collects conversation messages and tool outputs. ObserverWorker and ReflectorWorker (src/memory/observer-worker.ts, src/memory/reflector-worker.ts) process observations asynchronously: ObserverWorker creates raw ObservationStore entries; ReflectorWorker synthesizes patterns into new MemoryItems via ExtractionPipeline.
 
 ## Consequences
 

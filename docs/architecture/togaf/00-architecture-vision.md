@@ -4,7 +4,7 @@
 **Document ID:** TOGAF-AV-001  
 **Version:** 1.0  
 **Date:** 2026-02-25  
-**Status:** Approved  
+**Status:** Draft  
 
 ---
 
@@ -55,7 +55,7 @@ Zora establishes a resident agent layer on the user machine that:
 ## 4. Architecture Principles
 
 ### P1: Security by Policy, Not by Trust
-Every tool call is intercepted by PolicyEngine.canUseTool() (src/security/policy-engine.ts:404) before execution. The policy is declarative (TOML), user-editable, and loaded at boot. No LLM output can bypass the policy gate. See ADR-002.
+Every tool call is intercepted by PolicyEngine.canUseTool() (src/security/policy-engine.ts:488) before execution. The policy is declarative (TOML), user-editable, and loaded at boot. No LLM output can bypass the policy gate. See ADR-002.
 
 ### P2: Auditability as an Invariant
 Every significant event (task start/end, tool call, policy decision, memory extraction, failover) is written to audit/audit.jsonl via AuditLogger.log() (src/security/audit-logger.ts:50). Entries form a SHA-256 hash chain. Any tampering is detectable via AuditLogger.verifyChain() (src/security/audit-logger.ts:113).

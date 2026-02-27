@@ -20,7 +20,7 @@ Each threat requires a distinct control, and controls must compose without creat
 
 ### D1: Defense in Depth via Layered Controls
 
-No single control is sufficient. Zora implements four independent layers:
+No single control is sufficient. Zora implements five independent layers:
 
 1. **Input sanitization** (PromptDefense.sanitizeInput, src/security/prompt-defense.ts): Wraps externally-sourced content in untrusted_content XML tags and detects known injection patterns before they reach the LLM.
 
@@ -29,6 +29,8 @@ No single control is sufficient. Zora implements four independent layers:
 3. **Policy gate** (PolicyEngine.canUseTool, src/security/policy-engine.ts): Intercepts every tool call with path validation, command allowlisting, budget checking, and drift integration. The gate is in the SDK canUseTool callback, not the system prompt.
 
 4. **Output scanning** (LeakDetector.scan, src/security/leak-detector.ts): Scans all tool outputs for secret patterns (API keys, private keys, JWT tokens, AWS credentials) before returning results to the LLM.
+
+5. **Audit data minimization** (AuditLogger.log, src/security/audit-logger.ts): Redacts or hashes sensitive fields (prompt text, tool args/results containing secrets or PII) before persistence and export, while preserving forensic traceability via the hash chain.
 
 ### D2: HMAC-SHA256 for Intent Binding, SHA-256 for Audit Integrity
 
@@ -72,7 +74,7 @@ Drift blocking is configurable via DEFAULT_DRIFT_BLOCKING_MODE (src/config/defau
 
 This design addresses:
 - OWASP LLM01 (Prompt Injection): D1 PromptDefense
-- OWASP LLM02 (Sensitive Information Disclosure): D1 LeakDetector
+- OWASP LLM02 (Sensitive Information Disclosure): D1 LeakDetector + D1 Audit data minimization
 - OWASP LLM06 (Excessive Agency): D3 PolicyEngine + D4 Capability Tokens
 - OWASP LLM10 (Unbounded Consumption): D3 PolicyEngine BudgetPolicy
 - ASI01 (Goal Drift): D2 IntentCapsuleManager
