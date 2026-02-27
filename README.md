@@ -2,9 +2,115 @@
 
 # Zora
 
-**Your personal AI assistant that actually does things.** Tell it what you need in plain English — organize files, summarize documents, automate repetitive tasks — and it handles it while you do something else.
+**Your personal AI agent. Local, secure, and memory-first.**
 
-Unlike chatbots that just talk, Zora runs on your computer and takes action. It reads files, runs commands, remembers your preferences, and works within safety boundaries you control.
+Zora runs on your computer, takes real actions (reads files, runs commands, automates tasks), and actually remembers what it's doing between sessions — without giving up control of your system.
+
+---
+
+![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
+
+## Why This Matters Right Now
+
+In early 2026, [OpenClaw](https://fortune.com/2026/02/12/openclaw-ai-agents-security-risks-beware/) went viral — 180,000 GitHub stars in weeks. Security teams immediately found the problems: 30,000+ instances exposed to the internet without authentication, 800+ malicious skills in its registry (~20% of all skills), and a [CVSS 8.8 RCE vulnerability](https://www.reco.ai/blog/openclaw-the-ai-agent-security-crisis-unfolding-right-now) exploitable even against localhost.
+
+Around the same time, Summer Yue — Meta's director of AI alignment — [posted about her OpenClaw agent deleting 200+ emails](https://techcrunch.com/2026/02/23/a-meta-ai-security-researcher-said-an-openclaw-agent-ran-amok-on-her-inbox/) after she'd told it to wait for approval before doing anything. She screamed "STOP OPENCLAW" at it. It kept going. The root cause: **context compaction**. As her inbox grew, the AI's working memory filled up and started summarizing — including compressing her original "wait for approval" instruction into nothing.
+
+These aren't edge cases. They're architectural problems.
+
+Zora was built to not have them.
+
+---
+
+![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
+
+## The Security Architecture (Plain English)
+
+### 1. Locked by Default
+
+When you first install Zora, it can do nothing. Zero filesystem access, no shell commands, no network calls. You explicitly unlock capabilities during setup by choosing a trust level. OpenClaw's model is the opposite — everything is permitted unless you find and configure the restriction.
+
+**What this means:** A misconfigured Zora does nothing. A misconfigured OpenClaw has full system access.
+
+```toml
+# ~/.zora/policy.toml — your rules, loaded before every action
+[filesystem]
+allow = ["~/Projects", "~/.zora/workspace"]
+deny  = ["~/.ssh", "~/.gnupg", "~/Library", "/"]
+
+[shell]
+allow = ["git", "ls", "rg", "node", "npm"]
+deny  = ["sudo", "rm", "curl", "chmod"]
+
+[budget]
+max_actions_per_session = 100   # runaway loop prevention
+```
+
+### 2. Policies Live in Config Files, Not the Conversation
+
+This is the Summer Yue fix.
+
+Her "wait for approval" instruction was text in the AI's context window — the running conversation. When the context got too long, the agent summarized it, and the instruction got compressed away. The AI wasn't defying her. It had genuinely forgotten.
+
+Zora's safety rules live in `~/.zora/policy.toml` — a config file loaded by the **PolicyEngine** before every single action. Not once at the start of a conversation. Before every action. Context can compact all it wants; the policy file doesn't change.
+
+```
+User says something → LLM decides what to do → PolicyEngine checks policy.toml → Allowed? Execute. Blocked? Refuse.
+```
+
+The LLM cannot talk the PolicyEngine into ignoring policy.toml. They don't share a channel.
+
+### 3. No Skill Registry
+
+OpenClaw has ClawHub — a marketplace of third-party skills. 20% of that registry was found delivering malware. Zora has no skill registry. There is no third-party code that gets downloaded and executed by the agent. Zora's capabilities come from its built-in tools and the projects you explicitly configure.
+
+**What this means:** There's no supply chain attack surface.
+
+### 4. Action Budget
+
+Every session has a maximum number of actions (default: 100). If an agent enters a loop, it hits the budget and stops — it doesn't run until something externally kills it. Budget is configurable per task type.
+
+### 5. Full Audit Log
+
+Every action Zora takes — every file read, every command run, every tool call — is written to a tamper-proof log. Not just "task completed" but the specific action, the path, the command, the timestamp, and the outcome.
+
+```bash
+zora-agent audit              # browse your log
+zora-agent audit --last 50    # last 50 actions
+```
+
+**OWASP coverage:** Zora is hardened against the [OWASP LLM Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/) and [OWASP Agentic Top 10](https://owasp.org/www-project-agentic-ai-threats/) — prompt injection, tool-output injection, intent verification, action budgets, dry-run preview mode. See [SECURITY.md](SECURITY.md) for the technical breakdown.
+
+---
+
+![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
+
+## Memory That Survives
+
+AI agents have two memory problems: they forget between sessions, and they forget *within* sessions when the context window fills up.
+
+### Between-session memory
+
+Zora writes to `~/.zora/memory/` — plain text files on your disk — after every session. Tell it once that you prefer TypeScript, that your staging environment is on port 3001, that you want concise responses. It stores these permanently in files that load fresh at the start of every session, not in a conversation that has to be rebuilt.
+
+```
+~/.zora/memory/
+  preferences.md    ← your stated preferences
+  project-notes.md  ← what it's learned about your projects
+  items/            ← specific facts you've asked it to remember
+```
+
+Your memories are local files. You can read, edit, or delete them. Nothing goes to a cloud memory service.
+
+### Within-session compaction
+
+When a session's context window fills, Claude Code (which powers Zora's reasoning) compresses the conversation history. Zora is designed so that the things that matter most — your policy rules, your memory, incoming task instructions — are not in the compressible context.
+
+- **Policy rules:** loaded from `policy.toml` before every action (not in context)
+- **Memory:** injected fresh at session start from local files (not accumulated in conversation)
+- **Incoming tasks:** delivered as files in `~/.agent-bus/inbox/` — still on disk after compaction, re-injected on the next action
+
+This is why the Summer Yue scenario doesn't apply to Zora. Her constraint was in the conversation. Zora's constraints are in files.
 
 ---
 
@@ -18,23 +124,9 @@ zora-agent init
 zora-agent ask "summarize files in ~/Projects"
 ```
 
-That's it. Three commands and Zora is working for you.
-
 > **Note:** The npm package may lag behind the latest release. To install from source: `git clone https://github.com/ryaker/zora && cd zora && npm install && npm link`
 
-**New to the terminal?** See our [step-by-step Setup Guide](SETUP_GUIDE.md) — it assumes zero technical experience.
-
----
-
-![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
-
-## How Does It Work?
-
-You type a request. Zora figures out what needs to happen, does it, and shows you the result.
-
-Behind the scenes, Zora uses AI (Claude or Gemini) to understand your request, then uses tools on your computer — reading files, running safe commands, searching the web — to complete the task. Everything stays within safety rules you set up during installation.
-
-**No API keys. No surprise bills.** Zora authenticates through your existing Claude Code or Gemini CLI session. No per-token charges — it uses the subscription you already pay for.
+**New to the terminal?** See the [step-by-step Setup Guide](SETUP_GUIDE.md).
 
 ---
 
@@ -42,7 +134,7 @@ Behind the scenes, Zora uses AI (Claude or Gemini) to understand your request, t
 
 ## What Can Zora Do?
 
-Here are real things you can ask Zora right now:
+Real things you can ask right now:
 
 - **"Sort my Downloads folder by type and archive anything older than 30 days"** — File organization on autopilot
 - **"Find all TODO comments in my project and create a summary"** — Code analysis in seconds
@@ -50,25 +142,36 @@ Here are real things you can ask Zora right now:
 - **"What changed in my repos this week? Give me a summary"** — Stay on top of your work
 - **"Find and summarize the latest React 19 migration guides"** — Research without tab-hopping
 
-Zora remembers your preferences across sessions. Tell it once that you prefer TypeScript over JavaScript, and it remembers forever.
+---
+
+![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
+
+## No API Keys. No Surprise Bills.
+
+Zora authenticates through your existing Claude Code or Gemini CLI session. No developer account, no per-token charges, no credit card attached to an automation loop.
+
+```bash
+# Already authenticated via Claude Code? Zora just works.
+zora-agent init   # detects your existing session automatically
+```
+
+If you want fully free, fully offline operation: configure [Ollama](https://ollama.ai/) as your provider. No data leaves your machine.
 
 ---
 
 ![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
 
-## Is It Safe?
+## Multiple AI Providers, Automatic Failover
 
-Yes. Zora was built with safety as a core feature, not an afterthought.
+Zora works with multiple AI providers and picks the best one for each task:
 
-**You're always in control.** During setup, you choose what Zora can and can't do:
+| Provider | Best For | Cost |
+|----------|----------|------|
+| **Claude** (primary) | Deep reasoning, coding, creative work | Your existing subscription |
+| **Gemini** (backup) | Large documents, search, structured data | Your existing account |
+| **Ollama** (optional) | Fully offline, complete privacy | Free |
 
-- **Which folders** it can access (and which are off-limits, like your SSH keys)
-- **Which commands** it can run (safe ones like `git` and `ls`, never destructive ones like `sudo`)
-- **How much autonomy** it gets — from "ask me before doing anything" to "handle it yourself"
-
-Every action Zora takes is recorded in a tamper-proof audit log you can review anytime. If something looks wrong, you'll know exactly what happened and when.
-
-For the security-minded: Zora is hardened against the [OWASP LLM Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/) and [OWASP Agentic Top 10](https://owasp.org/www-project-agentic-ai-threats/). See [SECURITY.md](SECURITY.md) for the full technical breakdown.
+If one provider is unavailable, Zora automatically fails over. You never manage this yourself.
 
 ---
 
@@ -76,27 +179,11 @@ For the security-minded: Zora is hardened against the [OWASP LLM Top 10](https:/
 
 ## The Dashboard
 
-Zora includes a local web dashboard where you can watch tasks happen in real time, check on your AI providers, and send course-corrections to running jobs.
-
 ```bash
 zora-agent start
 ```
 
-Your browser opens automatically to `http://localhost:8070`. First-time users see a guided welcome screen with ready-to-go task templates.
-
----
-
-![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
-
-## Multiple AI Brains, One Interface
-
-Zora works with multiple AI providers and picks the best one for each task:
-
-- **Claude** (primary) — Deep reasoning, coding, creative work
-- **Gemini** (backup) — Search, large documents, structured data
-- **Ollama** (optional, local) — Zero-cost, fully offline, complete privacy
-
-If one provider is unavailable, Zora automatically fails over to the next one. You never have to manage this yourself.
+Opens `http://localhost:8070` — watch tasks run in real time, check provider health, send course corrections to running jobs.
 
 ---
 
@@ -104,11 +191,11 @@ If one provider is unavailable, Zora automatically fails over to the next one. Y
 
 ## Scheduled Tasks
 
-Set up recurring tasks that run automatically:
-
-- "Every morning at 8am, check for new issues assigned to me"
-- "Every Friday, generate a weekly project report"
-- "Every night, check for outdated dependencies"
+```
+"Every morning at 8am, check for new issues assigned to me"
+"Every Friday, generate a weekly project report"
+"Every night, check for outdated dependencies"
+```
 
 See the [Routines Cookbook](ROUTINES_COOKBOOK.md) for templates.
 
@@ -116,9 +203,22 @@ See the [Routines Cookbook](ROUTINES_COOKBOOK.md) for templates.
 
 ![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
 
-## Architecture
+## Project Status
 
-![Zora Architecture Diagram](docs/architecture.svg)
+Zora is in active development (v0.9.9). Core features work reliably today.
+
+| Feature | Status |
+|---------|--------|
+| Task execution via Claude and Gemini | ✅ Working |
+| Automatic failover between providers | ✅ Working |
+| PolicyEngine (file-based, compaction-proof) | ✅ Working |
+| Action budgets + runaway loop prevention | ✅ Working |
+| Tamper-proof audit log | ✅ Working |
+| Long-term memory across sessions | ✅ Working |
+| Web dashboard with live monitoring | ✅ Working |
+| Scheduled routines (cron-based) | ✅ Working |
+| Failed task retry with backoff | ✅ Working |
+| Cross-platform (macOS, Linux, Windows) | 🚧 macOS tested, others in progress |
 
 ---
 
@@ -128,32 +228,13 @@ See the [Routines Cookbook](ROUTINES_COOKBOOK.md) for templates.
 
 | Guide | Who It's For |
 |-------|-------------|
-| **[Quick Start](QUICKSTART.md)** | Get running in 5 minutes (some terminal comfort) |
+| **[Quick Start](QUICKSTART.md)** | Get running in 5 minutes |
 | **[Setup Guide](SETUP_GUIDE.md)** | Complete walkthrough for first-time users |
-| **[What Is Zora?](WHAT_IS_ZORA.md)** | Plain-English explainer for non-technical users |
-| **[FAQ](FAQ.md)** | Common questions answered simply |
-| **[Use Cases](USE_CASES.md)** | Real-world examples and workflow ideas |
-| **[Security Guide](SECURITY.md)** | How the safety system works (technical) |
-| **[Routines Cookbook](ROUTINES_COOKBOOK.md)** | Templates for scheduled tasks |
-
----
-
-![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
-
-## Project Status
-
-Zora is in active development (v0.9.9). The core features work reliably today.
-
-| Feature | Status |
-|---------|--------|
-| Task execution via Claude and Gemini | ✅ Working |
-| Automatic failover between providers | ✅ Working |
-| Safety system (file/command/network boundaries) | ✅ Working |
-| Long-term memory across sessions | ✅ Working |
-| Web dashboard with live monitoring | ✅ Working |
-| Scheduled routines (cron-based) | ✅ Working |
-| Failed task retry with backoff | ✅ Working |
-| Cross-platform (macOS, Linux, Windows) | 🚧 macOS tested, others in progress |
+| **[What Is Zora?](WHAT_IS_ZORA.md)** | Plain-English explainer |
+| **[Security Guide](SECURITY.md)** | Full technical breakdown — PolicyEngine, OWASP, trust levels |
+| **[FAQ](FAQ.md)** | Common questions |
+| **[Use Cases](USE_CASES.md)** | Real-world examples |
+| **[Routines Cookbook](ROUTINES_COOKBOOK.md)** | Scheduled task templates |
 
 ---
 
@@ -167,4 +248,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-*Local first. No surprise bills. Works for you.*
+*Local first. Policy-enforced. Memory that survives.*
