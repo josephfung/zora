@@ -49,7 +49,15 @@ Multi-agent teams spawn sub-agents that should operate with narrower permissions
 
 SOUL.md (agent identity), MEMORY.md (persistent memory), policy.toml, and config.toml are the four files whose modification could fundamentally alter agent behavior. IntegrityGuardian (src/security/integrity-guardian.ts) computes SHA-256 baselines at boot and alerts on mismatch. Quarantine capability (state/quarantine/) allows suspicious files to be isolated.
 
-### D6: Drift Blocking Modes
+### D6: Encrypted Secrets Storage
+
+Provider API keys and other credentials are stored encrypted at rest via SecretsManager (src/security/secrets-manager.ts). Each secret is encrypted with AES-256-GCM using a key derived from a master password (PBKDF2). Secrets are never stored in plaintext in config files or environment variables at rest; the encrypted store lives at ~/.zora/secrets.enc (mode 0o600).
+
+### D7: Policy Serialization
+
+PolicySerializer (src/security/policy-serializer.ts) separates policy I/O from the enforcement engine: `getPolicySummary()` produces human-readable policy summaries injected into the system prompt so the LLM understands its constraints; `writePolicyFile()` handles runtime policy persistence to TOML. Keeping serialization out of PolicyEngine ensures the enforcement path has no I/O dependencies.
+
+### D8: Drift Blocking Modes
 
 Drift blocking is configurable via DEFAULT_DRIFT_BLOCKING_MODE (src/config/defaults.ts) and the security.drift_blocking_mode config field:
 - log_only: Detect and log drift; do not block (default for development)
