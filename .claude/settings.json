@@ -258,7 +258,7 @@
           {
             "type": "command",
             "timeout": 2000,
-            "command": "RUVECTOR_CMD=\"$TOOL_INPUT_command\" npx ruvector@latest hooks pre-command 2>/dev/null || true"
+            "command": "bash -c 'RUVECTOR_CMD=$1; npx ruvector@latest hooks pre-command' _ \"$TOOL_INPUT_command\" 2>/dev/null || true"
           }
         ]
       },
@@ -310,7 +310,7 @@
           {
             "type": "command",
             "timeout": 2000,
-            "command": "RUVECTOR_CMD=\"$TOOL_INPUT_command\" npx ruvector@latest hooks post-command 2>/dev/null || true"
+            "command": "bash -c 'RUVECTOR_CMD=$1; npx ruvector@latest hooks post-command' _ \"$TOOL_INPUT_command\" 2>/dev/null || true"
           }
         ]
       }
@@ -358,12 +358,12 @@
           {
             "type": "command",
             "timeout": 2000,
-            "command": "AGENTIC_PROMPT=\"$CLAUDE_USER_PROMPT\" npx agentic-flow@alpha workers dispatch-prompt 2>/dev/null || true"
+            "command": "bash -c 'AGENTIC_PROMPT=$1; npx agentic-flow@alpha workers dispatch-prompt' _ \"$CLAUDE_USER_PROMPT\" 2>/dev/null || true"
           },
           {
             "type": "command",
             "timeout": 1000,
-            "command": "AGENTIC_PROMPT=\"$CLAUDE_USER_PROMPT\" npx agentic-flow@alpha workers inject-context 2>/dev/null || true"
+            "command": "bash -c 'AGENTIC_PROMPT=$1; npx agentic-flow@alpha workers inject-context' _ \"$CLAUDE_USER_PROMPT\" 2>/dev/null || true"
           }
         ]
       }
