@@ -49,7 +49,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.39",
     "@clack/prompts": "^1.0.1",
-    "@nodesecure/js-x-ray": "^11.1.0",
+    "@nodesecure/js-x-ray": "^13.0.0",
     "adm-zip": "^0.5.16",
     "commander": "^14.0.3",
     "express": "^4.21.2",
