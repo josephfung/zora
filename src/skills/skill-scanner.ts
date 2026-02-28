@@ -89,13 +89,16 @@ export const SEVERITY_RANK: Record<FindingSeverity, number> = {
 
 // ─── File Helpers ────────────────────────────────────────────────────────────
 
-async function walkDir(dir: string): Promise<string[]> {
+const MAX_WALK_DEPTH = 10;
+
+async function walkDir(dir: string, depth = 0): Promise<string[]> {
+  if (depth > MAX_WALK_DEPTH) return [];
   const entries = await fs.readdir(dir, { withFileTypes: true });
   const files: string[] = [];
   for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
-      files.push(...await walkDir(full));
+      files.push(...await walkDir(full, depth + 1));
     } else {
       files.push(full);
     }

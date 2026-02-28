@@ -79,6 +79,12 @@ zora-agent skill audit
 
 # Scan only, don't install
 zora-agent skill install my-skill.skill --dry-run
+
+# Raise threshold to catch medium-severity findings too
+zora-agent skill install my-skill.skill --threshold medium
+
+# Install anyway despite warnings (use with caution)
+zora-agent skill install my-skill.skill --force
 ```
 
 The scanner uses AST analysis ([js-x-ray](https://github.com/NodeSecure/js-x-ray)) to detect obfuscation, `eval`, data exfiltration, environment variable theft, `curl | bash` patterns, hardcoded secrets, and overly-permissive `allowed-tools` declarations — the exact patterns found in malicious ClawHub skills.
