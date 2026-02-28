@@ -53,7 +53,9 @@ const JS_WARNING_SEVERITY: Record<string, FindingSeverity> = {
   'parsing-error':        'info',
 };
 
-// allowed-tools entries that should block install
+// allowed-tools entries that should block install at high severity
+// NOTE: Bash(*) is intentionally excluded here — it has its own critical check below
+// to avoid being downgraded to high by the deduplication step
 const DANGEROUS_TOOL_PATTERNS = [
   /Bash\(sudo/i,
   /Bash\(rm\b/i,
@@ -61,7 +63,6 @@ const DANGEROUS_TOOL_PATTERNS = [
   /Bash\(wget\b/i,
   /Bash\(chmod\b/i,
   /Bash\(chown\b/i,
-  /Bash\(\*\)/,      // wildcard shell — unrestricted bash
 ];
 
 // Shell script dangerous patterns (regex → message)
@@ -82,7 +83,7 @@ const SECRET_PATTERNS: Array<{ re: RegExp; severity: FindingSeverity; message: s
   { re: /xoxb-[A-Za-z0-9\-]+/,           severity: 'high',     message: 'Possible Slack bot token' },
 ];
 
-const SEVERITY_RANK: Record<FindingSeverity, number> = {
+export const SEVERITY_RANK: Record<FindingSeverity, number> = {
   critical: 4, high: 3, medium: 2, low: 1, info: 0,
 };
 
@@ -149,31 +150,42 @@ function scanSecrets(code: string, relPath: string): ScanFinding[] {
 }
 
 function scanAllowedTools(frontmatter: string, relPath: string): ScanFinding[] {
-  const match = frontmatter.match(/allowed-tools:\s*(.+)/);
-  if (!match) return [];
+  const lines = frontmatter.split('\n');
+  const startIdx = lines.findIndex((line) => /allowed-tools\s*:/.test(line));
+  if (startIdx === -1) return [];
 
-  const toolsLine = match[1]!;
+  // Collect the full allowed-tools block including YAML list items on subsequent lines
+  // Stop when we hit the next YAML key (non-indented line that looks like "key:")
+  const toolsLines: string[] = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (i !== startIdx && /^[A-Za-z_-]+\s*:/.test(line)) break;
+    toolsLines.push(line);
+  }
+  const toolsBlock = toolsLines.join('\n');
   const findings: ScanFinding[] = [];
 
+  // Bash(*) is critical — check first, dedupe key differs from generic high findings
+  if (/Bash\(\*\)/.test(toolsBlock)) {
+    findings.push({
+      severity: 'critical',
+      file: relPath,
+      kind: 'dangerous-allowed-tools-wildcard',
+      message: 'SKILL.md declares Bash(*) — unrestricted shell access',
+    });
+  }
+
+  // Other dangerous patterns → high
   for (const pattern of DANGEROUS_TOOL_PATTERNS) {
-    if (pattern.test(toolsLine)) {
+    if (pattern.test(toolsBlock)) {
       findings.push({
         severity: 'high',
         file: relPath,
         kind: 'dangerous-allowed-tools',
-        message: `SKILL.md declares dangerous allowed-tools: ${toolsLine.trim()}`,
+        message: `SKILL.md declares dangerous allowed-tools: ${toolsLines[0]!.trim()}`,
       });
+      break; // one high finding per block is enough
     }
-  }
-
-  // Wildcard Bash is critical
-  if (/Bash\(\*\)/.test(toolsLine)) {
-    findings.push({
-      severity: 'critical',
-      file: relPath,
-      kind: 'dangerous-allowed-tools',
-      message: 'SKILL.md declares Bash(*) — unrestricted shell access',
-    });
   }
 
   return findings;

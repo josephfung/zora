@@ -28,6 +28,11 @@ export function registerSkillCommands(program: Command): void {
     .option('--threshold <level>', 'Report findings at this severity and above: critical|high|medium|low (default: high)', 'high')
     .option('--fail-fast', 'Stop on first critical finding')
     .action(async (opts: { threshold: string; failFast?: boolean }) => {
+      const validThresholds = ['critical', 'high', 'medium', 'low'];
+      if (!validThresholds.includes(opts.threshold)) {
+        console.error(`Invalid threshold "${opts.threshold}". Use: ${validThresholds.join(', ')}`);
+        process.exit(1);
+      }
       const threshold = opts.threshold as 'critical' | 'high' | 'medium' | 'low';
       console.log(`Auditing installed skills (threshold: ${threshold})...\n`);
 

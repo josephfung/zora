@@ -21,7 +21,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import AdmZip from 'adm-zip';
-import { scanSkillDir, formatScanReport, type FindingSeverity } from './skill-scanner.js';
+import { scanSkillDir, formatScanReport, type FindingSeverity, SEVERITY_RANK } from './skill-scanner.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -134,12 +134,17 @@ export async function installSkill(
     const report = formatScanReport(scanResult);
 
     if (!scanResult.passed && !options.force) {
+      const threshold = options.severityThreshold ?? 'high';
+      const thresholdRank = SEVERITY_RANK[threshold] ?? 0;
+      const blockedCount = scanResult.findings.filter(
+        (f) => (SEVERITY_RANK[f.severity] ?? 0) >= thresholdRank
+      ).length;
       return {
         skillName,
         installed: false,
         scanPassed: false,
         report,
-        blockedBy: `${scanResult.findings.filter((f) => ['critical', 'high'].includes(f.severity)).length} critical/high finding(s). Use --force to override.`,
+        blockedBy: `${blockedCount} finding(s) at or above ${threshold} severity. Use --force to override.`,
       };
     }
 
@@ -152,19 +157,24 @@ export async function installSkill(
       };
     }
 
-    // 6. Install — move skill dir to target
+    // 6. Atomic install — copy to temp dir in target, then rename
+    // This ensures a valid version (old or new) always exists if something fails mid-copy
     const targetBase = getTargetDir(options);
     await fs.mkdir(targetBase, { recursive: true });
     const installPath = path.join(targetBase, dirName);
+    const stagingPath = path.join(targetBase, `.${dirName}.installing`);
 
-    // If skill already exists, remove it first
+    // Copy to staging first
+    await fs.cp(skillDir, stagingPath, { recursive: true });
+
+    // Atomic rename: removes old and puts new in place in one step
     try {
-      await fs.rm(installPath, { recursive: true, force: true });
+      await fs.rename(stagingPath, installPath);
     } catch {
-      // ignore
+      // rename can fail cross-device — fall back to rm + rename
+      await fs.rm(installPath, { recursive: true, force: true });
+      await fs.rename(stagingPath, installPath);
     }
-
-    await fs.cp(skillDir, installPath, { recursive: true });
 
     return {
       skillName,
