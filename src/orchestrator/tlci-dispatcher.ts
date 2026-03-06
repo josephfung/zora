@@ -13,8 +13,13 @@ const log = createLogger('tlci-dispatcher');
 
 export type AutonomyLevel = 'ask' | 'confirm_plan' | 'full';
 
+/** Static dispatcher configuration (set once at construction). */
 export interface TLCIDispatchOptions {
   autonomyLevel: AutonomyLevel;
+}
+
+/** Per-call options passed to dispatch() — override defaults for individual runs. */
+export interface DispatchCallOptions {
   budgetLimitUSD?: number;
   skipCacheFor?: string[];
   dryRun?: boolean;
@@ -22,7 +27,10 @@ export interface TLCIDispatchOptions {
 
 export interface DispatchResult {
   planId: string;
+  planHash: string;
+  cacheHit: boolean;
   stepsExecuted: number;
+  tierBreakdown: { code: number; slm: number; frontier: number };
   tokensSpent: number;
   actualCostUSD: number;
   savedVsAllLLM: number;
@@ -42,7 +50,7 @@ export class TLCIDispatcher {
     private readonly _approvalFn: ApprovalFn,
   ) {}
 
-  async dispatch(steps: WorkflowStep[]): Promise<DispatchResult> {
+  async dispatch(steps: WorkflowStep[], callOpts: DispatchCallOptions = {}): Promise<DispatchResult> {
     const startTime = Date.now();
 
     const planHash = createHash('sha256')
@@ -51,10 +59,14 @@ export class TLCIDispatcher {
       .slice(0, 16);
 
     let plan: ExecutionPlan | null = null;
+    let cacheHit = false;
 
-    if (!this._options.skipCacheFor?.includes(planHash)) {
+    if (!callOpts.skipCacheFor?.includes(planHash)) {
       plan = await this._planCache.get(planHash);
-      if (plan) log.debug({ planHash }, 'plan cache hit');
+      if (plan) {
+        cacheHit = true;
+        log.debug({ planHash }, 'plan cache hit');
+      }
     }
 
     if (!plan) {
@@ -64,11 +76,11 @@ export class TLCIDispatcher {
     }
 
     if (
-      this._options.budgetLimitUSD !== undefined &&
-      plan.costComparison.tlciEstimate > this._options.budgetLimitUSD
+      callOpts.budgetLimitUSD !== undefined &&
+      plan.costComparison.tlciEstimate > callOpts.budgetLimitUSD
     ) {
       throw new Error(
-        `Estimated cost $${plan.costComparison.tlciEstimate.toFixed(4)} exceeds budget limit $${this._options.budgetLimitUSD}`
+        `Estimated cost $${plan.costComparison.tlciEstimate.toFixed(4)} exceeds budget limit $${callOpts.budgetLimitUSD}`
       );
     }
 
@@ -79,10 +91,13 @@ export class TLCIDispatcher {
       plan.approvedAt = Date.now();
     }
 
-    if (this._options.dryRun) {
+    if (callOpts.dryRun) {
       return {
         planId: plan.planId,
+        planHash: plan.planHash,
+        cacheHit,
         stepsExecuted: 0,
+        tierBreakdown: plan.tierBreakdown,
         tokensSpent: 0,
         actualCostUSD: 0,
         savedVsAllLLM: plan.costComparison.savingsUSD,
@@ -114,13 +129,22 @@ export class TLCIDispatcher {
     }
 
     log.info(
-      { planId: plan.planId, steps: plan.steps.length, actualCostUSD, savedVsAllLLM: plan.costComparison.allLLMEstimate - actualCostUSD },
+      {
+        planId: plan.planId,
+        steps: plan.steps.length,
+        cacheHit,
+        actualCostUSD,
+        savedVsAllLLM: plan.costComparison.allLLMEstimate - actualCostUSD,
+      },
       'tlci dispatch complete'
     );
 
     return {
       planId: plan.planId,
+      planHash: plan.planHash,
+      cacheHit,
       stepsExecuted: plan.steps.length,
+      tierBreakdown: plan.tierBreakdown,
       tokensSpent,
       actualCostUSD,
       savedVsAllLLM: plan.costComparison.allLLMEstimate - actualCostUSD,
