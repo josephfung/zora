@@ -53,9 +53,10 @@ import { IntentCapsuleManager } from '../security/intent-capsule.js';
 import { LeakDetector } from '../security/leak-detector.js';
 import { sanitizeInput } from '../security/prompt-defense.js';
 import { createLogger } from '../utils/logger.js';
-import { TLCIDispatcher, type DispatchResult, type TLCIDispatchOptions } from './tlci-dispatcher.js';
+import { TLCIDispatcher, type DispatchResult, type DispatchCallOptions } from './tlci-dispatcher.js';
 import { PlanCache } from '../memory/plan-cache.js';
 import type { WorkflowStep } from './step-classifier.js';
+import { runCodeToolStep } from './code-tool-runner.js';
 
 const log = createLogger('orchestrator');
 
@@ -925,49 +926,87 @@ export class Orchestrator {
    * Routes each step to code tools, Ollama SLM, or frontier LLM based on classification.
    * Additive — does not modify existing submitTask behavior.
    */
+  /**
+   * submitWorkflow — TLCI-aware multi-step workflow dispatch.
+   *
+   * Routes each step to the cheapest capable tier:
+   *   Tier 1 (code): deterministic code tools — httpFetch, transform, fileOp, etc.
+   *   Tier 2 (slm):  local Ollama model (qwen3:8b or configured model), falls back to frontier
+   *   Tier 3 (frontier): existing Zora provider stack (Claude/Gemini)
+   *
+   * Pass structured parameters for code-tool steps via WorkflowStep.context:
+   *   { id: '1', description: 'fetch user data', context: { url: 'https://...', tool: 'httpFetch' } }
+   *
+   * Additive — does not touch submitTask.
+   */
   async submitWorkflow(
     steps: WorkflowStep[],
-    opts?: { budgetLimitUSD?: number; dryRun?: boolean }
+    opts?: DispatchCallOptions,
   ): Promise<DispatchResult> {
     if (!this._planCache) {
       this._planCache = new PlanCache();
       await this._planCache.init();
     }
 
+    // Lazy-create dispatcher once (runners are stable across calls; per-call opts go to dispatch())
     if (!this._tlciDispatcher) {
-      const tlciOptions: TLCIDispatchOptions = {
-        autonomyLevel: 'full',
-        budgetLimitUSD: opts?.budgetLimitUSD,
-        dryRun: opts?.dryRun,
-      };
-
       const self = this;
+
+      // Find the Ollama provider by cost tier so we can direct SLM steps to it
+      const ollamaProvider = this._providers.find(p => p.costTier === 'free');
+
       this._tlciDispatcher = new TLCIDispatcher(
         this._planCache,
-        tlciOptions,
-        // Code tool runner — log and pass-through (code tools wired per-step in future)
+        { autonomyLevel: 'full' },
+
+        // Tier 1: real code tools — no LLM call, no token cost
         async (step) => {
-          log.info({ stepId: step.id, tool: (step as WorkflowStep & { suggestedCodeTool?: string }).suggestedCodeTool }, 'tlci code-tool step');
-        },
-        // Ollama runner — fall back to frontier if Ollama unavailable
-        async (step) => {
-          try {
-            await self.submitTask({ prompt: step.description, model: 'ollama' });
-          } catch {
-            log.warn({ stepId: step.id }, 'ollama unavailable, falling back to frontier');
-            await self.submitTask({ prompt: step.description });
+          const classifiedStep = step as WorkflowStep & { suggestedCodeTool?: string };
+          const result = await runCodeToolStep({
+            id: step.id,
+            suggestedCodeTool: classifiedStep.suggestedCodeTool,
+            context: step.context,
+            description: step.description,
+          });
+          if (!result.success) {
+            log.warn({ stepId: step.id, tool: result.tool, error: result.error }, 'code-tool step failed');
           }
+          return result;
         },
-        // Frontier runner
+
+        // Tier 2: Ollama (local, free) — route via maxCostTier: 'free'
+        // Falls back to frontier if Ollama unavailable or circuit-broken
         async (step) => {
-          await self.submitTask({ prompt: step.description });
+          if (ollamaProvider) {
+            try {
+              const available = await ollamaProvider.isAvailable();
+              if (available) {
+                return await self.submitTask({ prompt: step.description, maxCostTier: 'free' as CostTier });
+              }
+            } catch {
+              // fall through to frontier
+            }
+          }
+          log.warn({ stepId: step.id }, 'Ollama unavailable — falling back to frontier for SLM step');
+          return self.submitTask({ prompt: step.description });
         },
-        // Approval function — auto-approve in full autonomy mode
+
+        // Tier 3: frontier — existing provider stack
+        async (step) => {
+          return self.submitTask({ prompt: step.description });
+        },
+
+        // Approval — auto in full-autonomy mode
         async (_message) => true,
       );
     }
 
-    return this._tlciDispatcher.dispatch(steps);
+    return this._tlciDispatcher.dispatch(steps, opts ?? {});
+  }
+
+  /** Expose PlanCache for CostTracker wiring in DashboardServer. */
+  getPlanCache(): PlanCache | undefined {
+    return this._planCache;
   }
 
   /**
