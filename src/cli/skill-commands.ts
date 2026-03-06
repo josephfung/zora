@@ -44,7 +44,7 @@ export function registerSkillCommands(program: Command): void {
       console.log(report.summary);
 
       if (!report.clean) {
-        console.log('\nRun "zora-agent skill uninstall <name>" to remove flagged skills,');
+        console.log('\nTo remediate: remove the flagged skill directory from ~/.claude/skills/<name>/,');
         console.log('or reinstall via "zora-agent skill install <file.skill>" to get a verified version.');
         process.exit(1);
       }

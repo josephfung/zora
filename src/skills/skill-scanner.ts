@@ -120,10 +120,26 @@ function scanJsTs(code: string, relPath: string): ScanFinding[] {
   return result.warnings.map((w): ScanFinding => ({
     severity: JS_WARNING_SEVERITY[w.kind as string] ?? 'low',
     file: relPath,
-    line: Array.isArray(w.location) ? (w.location[0] as [number, number])?.[0] : undefined,
+    line: extractLine(w.location),
     kind: String(w.kind),
     message: `${w.kind}${'value' in w && w.value ? ': ' + String(w.value) : ''}`,
   }));
+}
+
+function extractLine(location: unknown): number | undefined {
+  if (!location) return undefined;
+  if (typeof location === 'number') return location;
+  // [[startLine, startCol], [endLine, endCol]]
+  if (Array.isArray(location) && Array.isArray(location[0])) return location[0][0] as number;
+  // [startLine, startCol]
+  if (Array.isArray(location) && typeof location[0] === 'number') return location[0] as number;
+  // { start: { line, column } }
+  if (typeof location === 'object' && 'start' in location) {
+    const start = (location as { start: unknown }).start;
+    if (typeof start === 'number') return start;
+    if (typeof start === 'object' && start !== null && 'line' in start) return (start as { line: number }).line;
+  }
+  return undefined;
 }
 
 function scanShell(code: string, relPath: string): ScanFinding[] {
