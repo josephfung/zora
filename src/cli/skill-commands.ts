@@ -11,6 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { loadSkills } from '../skills/skill-loader.js';
+import { installSkill } from '../skills/skill-installer.js';
+import { auditInstalledSkills } from '../skills/skill-auditor.js';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('skill-commands');
@@ -19,6 +21,34 @@ export function registerSkillCommands(program: Command): void {
   const skill = program
     .command('skill')
     .description('List and inspect available Claude Code skills');
+
+  skill
+    .command('audit')
+    .description('Scan all installed skills for security issues (catches manually installed skills)')
+    .option('--threshold <level>', 'Report findings at this severity and above: critical|high|medium|low (default: high)', 'high')
+    .option('--fail-fast', 'Stop on first critical finding')
+    .action(async (opts: { threshold: string; failFast?: boolean }) => {
+      const validThresholds = ['critical', 'high', 'medium', 'low'];
+      if (!validThresholds.includes(opts.threshold)) {
+        console.error(`Invalid threshold "${opts.threshold}". Use: ${validThresholds.join(', ')}`);
+        process.exit(1);
+      }
+      const threshold = opts.threshold as 'critical' | 'high' | 'medium' | 'low';
+      console.log(`Auditing installed skills (threshold: ${threshold})...\n`);
+
+      const report = await auditInstalledSkills({
+        severityThreshold: threshold,
+        failFast: opts.failFast,
+      });
+
+      console.log(report.summary);
+
+      if (!report.clean) {
+        console.log('\nTo remediate: remove the flagged skill directory from ~/.claude/skills/<name>/,');
+        console.log('or reinstall via "zora-agent skill install <file.skill>" to get a verified version.');
+        process.exit(1);
+      }
+    });
 
   skill
     .command('list')
@@ -38,6 +68,58 @@ export function registerSkillCommands(program: Command): void {
       for (const s of skills) {
         const paddedName = s.name.padEnd(maxNameLen + 2);
         console.log(`  ${paddedName}${s.description}`);
+      }
+    });
+
+  skill
+    .command('install')
+    .description('Install a skill from a .skill or .zip package')
+    .argument('<file>', 'Path to .skill or .zip file')
+    .option('--project', 'Install to .zora/skills/ (project-local) instead of ~/.claude/skills/ (global)')
+    .option('--force', 'Install despite security findings')
+    .option('--dry-run', 'Scan only — do not install')
+    .option('--threshold <level>', 'Block at this severity and above: critical|high|medium|low (default: high)', 'high')
+    .action(async (file: string, opts: { project?: boolean; force?: boolean; dryRun?: boolean; threshold: string }) => {
+      const absFile = path.resolve(file);
+      try {
+        await fs.access(absFile);
+      } catch {
+        console.error(`File not found: ${absFile}`);
+        process.exit(1);
+      }
+
+      const threshold = opts.threshold as 'critical' | 'high' | 'medium' | 'low';
+      const validThresholds = ['critical', 'high', 'medium', 'low'];
+      if (!validThresholds.includes(threshold)) {
+        console.error(`Invalid threshold "${threshold}". Use: ${validThresholds.join(', ')}`);
+        process.exit(1);
+      }
+
+      console.log(`Scanning ${path.basename(absFile)}...`);
+
+      try {
+        const result = await installSkill(absFile, {
+          target: opts.project ? 'project' : 'global',
+          severityThreshold: threshold,
+          force: opts.force,
+          dryRun: opts.dryRun,
+        });
+
+        console.log(result.report);
+
+        if (result.installed) {
+          console.log(`\n✅ Installed: ${result.skillName}`);
+          console.log(`   Path: ${result.installPath}`);
+          if (!result.scanPassed) {
+            console.log(`   ⚠️  Installed with findings (--force)`);
+          }
+        } else if (result.blockedBy) {
+          console.error(`\n❌ Install blocked: ${result.blockedBy}`);
+          process.exit(1);
+        }
+      } catch (err) {
+        console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
       }
     });
 

@@ -68,7 +68,26 @@ Zora supports skills, but there is no ClawHub equivalent. Skills are local files
 
 **What this means:** You can't poison a registry that doesn't exist. The supply chain attack surface scales with your own choices, not with a marketplace serving 180,000 users.
 
-> **Roadmap:** Skill scanning (static analysis of skill files before install) is on the roadmap. Not built yet — worth knowing.
+Zora scans every skill before it installs — and audits already-installed skills to catch anything dropped in manually:
+
+```bash
+# Install a .skill package — scanned before anything executes
+zora-agent skill install my-skill.skill
+
+# Audit all installed skills (catches git clone, copy-paste installs)
+zora-agent skill audit
+
+# Scan only, don't install
+zora-agent skill install my-skill.skill --dry-run
+
+# Raise threshold to catch medium-severity findings too
+zora-agent skill install my-skill.skill --threshold medium
+
+# Install anyway despite warnings (use with caution)
+zora-agent skill install my-skill.skill --force
+```
+
+The scanner uses AST analysis ([js-x-ray](https://github.com/NodeSecure/js-x-ray)) to detect obfuscation, `eval`, data exfiltration, environment variable theft, `curl | bash` patterns, hardcoded secrets, and overly-permissive `allowed-tools` declarations — the exact patterns found in malicious ClawHub skills.
 
 ### 4. Action Budget
 
@@ -218,6 +237,8 @@ Zora is in active development (v0.9.9). Core features work reliably today.
 | PolicyEngine (file-based, compaction-proof) | ✅ Working |
 | Action budgets + runaway loop prevention | ✅ Working |
 | Tamper-proof audit log | ✅ Working |
+| Skill install with AST security scan | ✅ Working |
+| Skill audit (catches manually installed skills) | ✅ Working |
 | Long-term memory across sessions | ✅ Working |
 | Web dashboard with live monitoring | ✅ Working |
 | Scheduled routines (cron-based) | ✅ Working |
