@@ -44,7 +44,7 @@ const TIER1_PATTERNS: TierPattern[] = [
 
 const TIER2_PATTERNS: RegExp[] = [
   /\bclassify\b|\bcategorize\b|\blabel\b/i,
-  /\bextract.*entit(y|ies)\b/i,
+  /\bextract.*entit/i,
   /\bsentiment\b|\btone detect/i,
   /\bintent detect\b|\bintent classif/i,
   /\broute\b|\bassign to\b|\bdispatch to\b/i,

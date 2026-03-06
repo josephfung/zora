@@ -29,10 +29,6 @@ export class PlanCache {
   }
 
   private _filePath(planHash: string): string {
-    // Validate planHash is hex-only (SHA-256 output) to prevent path traversal
-    if (!/^[a-f0-9]+$/i.test(planHash)) {
-      throw new Error(`Invalid planHash "${planHash}" — must be hex characters only`);
-    }
     return path.join(this._cacheDir, `${planHash}.json`);
   }
 
