@@ -5,6 +5,7 @@ import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 
 import WelcomeOnboarding from './components/WelcomeOnboarding';
+import { TLCIPanel } from './components/TLCIPanel.js';
 import TaskTemplates from './components/TaskTemplates';
 import TaskSummary, { type TaskStep } from './components/TaskSummary';
 import SecuritySettings from './components/SecuritySettings';
@@ -685,6 +686,11 @@ const App: React.FC = () => {
                       </div>
                     ))}
                   </div>
+                </div>
+
+                {/* TLCI Cost Tracker Panel */}
+                <div className="px-4 py-3">
+                  <TLCIPanel />
                 </div>
               </>
             )}

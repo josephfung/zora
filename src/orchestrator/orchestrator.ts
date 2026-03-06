@@ -53,6 +53,9 @@ import { IntentCapsuleManager } from '../security/intent-capsule.js';
 import { LeakDetector } from '../security/leak-detector.js';
 import { sanitizeInput } from '../security/prompt-defense.js';
 import { createLogger } from '../utils/logger.js';
+import { TLCIDispatcher, type DispatchResult, type TLCIDispatchOptions } from './tlci-dispatcher.js';
+import { PlanCache } from '../memory/plan-cache.js';
+import type { WorkflowStep } from './step-classifier.js';
 
 const log = createLogger('orchestrator');
 
@@ -123,6 +126,10 @@ export class Orchestrator {
   private _consolidationTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private _booted = false;
+
+  // TLCI: lazy-initialized dispatcher and plan cache (additive — does not affect submitTask)
+  private _planCache?: PlanCache;
+  private _tlciDispatcher?: TLCIDispatcher;
 
   constructor(options: OrchestratorOptions) {
     this._config = options.config;
@@ -911,6 +918,56 @@ export class Orchestrator {
     }
 
     return result;
+  }
+
+  /**
+   * submitWorkflow — TLCI-aware multi-step workflow dispatch.
+   * Routes each step to code tools, Ollama SLM, or frontier LLM based on classification.
+   * Additive — does not modify existing submitTask behavior.
+   */
+  async submitWorkflow(
+    steps: WorkflowStep[],
+    opts?: { budgetLimitUSD?: number; dryRun?: boolean }
+  ): Promise<DispatchResult> {
+    if (!this._planCache) {
+      this._planCache = new PlanCache();
+      await this._planCache.init();
+    }
+
+    if (!this._tlciDispatcher) {
+      const tlciOptions: TLCIDispatchOptions = {
+        autonomyLevel: 'full',
+        budgetLimitUSD: opts?.budgetLimitUSD,
+        dryRun: opts?.dryRun,
+      };
+
+      const self = this;
+      this._tlciDispatcher = new TLCIDispatcher(
+        this._planCache,
+        tlciOptions,
+        // Code tool runner — log and pass-through (code tools wired per-step in future)
+        async (step) => {
+          log.info({ stepId: step.id, tool: (step as WorkflowStep & { suggestedCodeTool?: string }).suggestedCodeTool }, 'tlci code-tool step');
+        },
+        // Ollama runner — fall back to frontier if Ollama unavailable
+        async (step) => {
+          try {
+            await self.submitTask({ prompt: step.description, model: 'ollama' });
+          } catch {
+            log.warn({ stepId: step.id }, 'ollama unavailable, falling back to frontier');
+            await self.submitTask({ prompt: step.description });
+          }
+        },
+        // Frontier runner
+        async (step) => {
+          await self.submitTask({ prompt: step.description });
+        },
+        // Approval function — auto-approve in full autonomy mode
+        async (_message) => true,
+      );
+    }
+
+    return this._tlciDispatcher.dispatch(steps);
   }
 
   /**
