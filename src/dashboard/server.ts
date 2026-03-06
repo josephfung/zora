@@ -18,6 +18,7 @@ import type { AuthMonitor } from '../orchestrator/auth-monitor.js';
 import type { LLMProvider, ProviderQuotaSnapshot } from '../types.js';
 import { createAuthMiddleware } from './auth-middleware.js';
 import { createLogger } from '../utils/logger.js';
+import { CostTracker } from './cost-tracker.js';
 import { shouldIncludeEvent } from '../utils/event-filter.js';
 import type { VerbosityLevel } from '../utils/event-filter.js';
 import type { AgentEvent } from '../types.js';
@@ -51,6 +52,8 @@ export interface DashboardOptions {
    * skipped (localhost-only use case).
    */
   dashboardToken?: string;
+  /** Optional TLCI cost tracker — enables /api/tlci-stats endpoint */
+  costTracker?: CostTracker;
 }
 
 export class DashboardServer {
@@ -59,9 +62,12 @@ export class DashboardServer {
   private _server: Server | undefined;
   /** TYPE-12: Map SSE clients to their verbosity level */
   private readonly _sseClients: Map<ExpressResponse, VerbosityLevel> = new Map();
+  /** TLCI cost tracker — undefined when not configured */
+  private readonly _tlciCostTracker: CostTracker | undefined;
 
   constructor(options: DashboardOptions) {
     this._options = options;
+    this._tlciCostTracker = options.costTracker;
     this._app = express();
 
     // R22: Explicit body size limits
@@ -371,6 +377,20 @@ export class DashboardServer {
         clearInterval(keepAlive);
         this._sseClients.delete(res);
       });
+    });
+
+    /** GET /api/tlci-stats — TLCI cost tracker snapshot for dashboard UI */
+    this._app.get('/api/tlci-stats', async (_req, res) => {
+      if (!this._tlciCostTracker) {
+        res.status(503).json({ error: 'TLCI cost tracker not enabled' });
+        return;
+      }
+      try {
+        const snapshot = await this._tlciCostTracker.getSnapshot();
+        res.json(snapshot);
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
     });
 
     // Catch-all: serve index.html for SPA routing
