@@ -28,14 +28,10 @@ export function TLCIPanel() {
   const [enabled, setEnabled] = useState(true);
 
   useEffect(() => {
-    // Don't poll once disabled — stops unnecessary background requests
-    if (!enabled) return;
-
     const fetchStats = async () => {
       try {
         const res = await fetch('/api/tlci-stats');
-        // Hide panel if TLCI not enabled (503) or auth not configured for this route (401/403)
-        if (res.status === 503 || res.status === 401 || res.status === 403) { setEnabled(false); return; }
+        if (res.status === 503) { setEnabled(false); return; }
         if (!res.ok) return;
         setSnapshot(await res.json() as TLCISnapshot);
       } catch {
@@ -46,7 +42,7 @@ export function TLCIPanel() {
     fetchStats();
     const interval = setInterval(fetchStats, 5000);
     return () => clearInterval(interval);
-  }, [enabled]);
+  }, []);
 
   if (!enabled) return null;
 
@@ -58,12 +54,10 @@ export function TLCIPanel() {
 
   const total = snapshot.last100StepsTierDistribution.code +
     snapshot.last100StepsTierDistribution.slm +
-    snapshot.last100StepsTierDistribution.frontier;
-  // No steps yet — show 0% for all tiers. Compute each independently to avoid negative
-  // values when rounding causes codePct + slmPct to exceed 100.
-  const codePct = total === 0 ? 0 : Math.round((snapshot.last100StepsTierDistribution.code / total) * 100);
-  const slmPct = total === 0 ? 0 : Math.round((snapshot.last100StepsTierDistribution.slm / total) * 100);
-  const frontierPct = total === 0 ? 0 : Math.round((snapshot.last100StepsTierDistribution.frontier / total) * 100);
+    snapshot.last100StepsTierDistribution.frontier || 1;
+  const codePct = Math.round((snapshot.last100StepsTierDistribution.code / total) * 100);
+  const slmPct = Math.round((snapshot.last100StepsTierDistribution.slm / total) * 100);
+  const frontierPct = 100 - codePct - slmPct;
 
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800/50 p-4 space-y-3">
