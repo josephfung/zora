@@ -45,7 +45,9 @@ function validateUrl(url: string): void {
     /^172\.(1[6-9]|2\d|3[01])\./,
     /^192\.168\./,
     /^169\.254\./,   // link-local / AWS metadata
-    /^::1$/,         // IPv6 loopback
+    /^::1$/,                     // IPv6 loopback (URL parser strips brackets)
+    /^::ffff:/,                  // IPv4-mapped IPv6 (e.g. ::ffff:192.168.1.1)
+    /^0+:0+:0+:0+:0+:0+:0+:1$/, // full-form IPv6 loopback
     /^metadata\.google\.internal$/,
   ];
   if (BLOCKED.some(r => r.test(host))) {
@@ -196,7 +198,7 @@ async function runFileOp(ctx: StepContext): Promise<CodeToolResult> {
   const filePath = ctx['path'] as string | undefined;
   if (!filePath) return { tool: 'fileOp', success: false, error: 'context.path required' };
 
-  const expanded = filePath.replace(/^~/, process.env['HOME'] ?? '');
+  const expanded = filePath.replace(/^~/, os.homedir() ??'');
   const normalized = path.resolve(expanded);
 
   if (normalized.includes('\0')) {
@@ -204,7 +206,7 @@ async function runFileOp(ctx: StepContext): Promise<CodeToolResult> {
   }
 
   // Restrict to safe directories — block sensitive paths first, then require an allowed prefix
-  const home = process.env['HOME'] ?? os.tmpdir();
+  const home = os.homedir() ??os.tmpdir();
   const ALLOWED_PREFIXES = [
     path.join(home, '.zora'),
     path.join(home, 'Dev'),
