@@ -18,6 +18,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('code-tool-runner');
@@ -158,7 +159,10 @@ function runCollectionOp(ctx: StepContext): CodeToolResult {
           ? [...arr].sort((a, b) => {
               const av = typeof a === 'object' && a !== null ? (a as Record<string, unknown>)[key] : a;
               const bv = typeof b === 'object' && b !== null ? (b as Record<string, unknown>)[key] : b;
-              return av! < bv! ? -1 : av! > bv! ? 1 : 0;
+              if (av === undefined && bv === undefined) return 0;
+              if (av === undefined) return 1;
+              if (bv === undefined) return -1;
+              return av < bv ? -1 : av > bv ? 1 : 0;
             })
           : [...arr].sort();
         break;
@@ -188,41 +192,71 @@ async function runFileOp(ctx: StepContext): Promise<CodeToolResult> {
   const filePath = ctx['path'] as string | undefined;
   if (!filePath) return { tool: 'fileOp', success: false, error: 'context.path required' };
 
-  const resolved = filePath.replace(/^~/, process.env['HOME'] ?? '');
-  const normalized = path.normalize(resolved);
-  if (normalized !== resolved || resolved.includes('\0')) {
+  const expanded = filePath.replace(/^~/, process.env['HOME'] ?? '');
+  const normalized = path.resolve(expanded);
+
+  if (normalized.includes('\0')) {
     return { tool: 'fileOp', success: false, error: 'Path traversal attempt blocked' };
   }
+
+  // Restrict to safe directories — block sensitive paths first, then require an allowed prefix
+  const home = process.env['HOME'] ?? os.tmpdir();
+  const ALLOWED_PREFIXES = [
+    path.join(home, '.zora'),
+    path.join(home, 'Dev'),
+    path.join(home, 'Documents'),
+    '/tmp',
+    '/private/tmp',   // macOS resolves /tmp → /private/tmp
+    os.tmpdir(),      // macOS: /var/folders/... or /tmp on Linux
+    process.cwd(),
+  ];
+  const BLOCKED_PREFIXES = [
+    path.join(home, '.ssh'),
+    path.join(home, '.gnupg'),
+    path.join(home, '.aws'),
+    path.join(home, '.env'),
+    '/etc',
+    '/sys',
+    '/proc',
+  ];
+
+  if (BLOCKED_PREFIXES.some(p => normalized.startsWith(p))) {
+    return { tool: 'fileOp', success: false, error: `Path "${normalized}" is outside allowed workspace` };
+  }
+  if (!ALLOWED_PREFIXES.some(p => normalized.startsWith(p))) {
+    return { tool: 'fileOp', success: false, error: `Path "${normalized}" is outside allowed workspace` };
+  }
+
   const operation = (ctx['operation'] as string | undefined) ?? 'read';
 
   try {
     let data: unknown;
     switch (operation) {
       case 'read': {
-        const raw = await fs.readFile(resolved, 'utf-8');
+        const raw = await fs.readFile(normalized, 'utf-8');
         try { data = JSON.parse(raw); } catch { data = raw; }
         break;
       }
       case 'write': {
         const content = ctx['content'];
         const str = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
-        await fs.writeFile(resolved, str, 'utf-8');
+        await fs.writeFile(normalized, str, 'utf-8');
         data = { written: str.length };
         break;
       }
       case 'list': {
-        const entries = await fs.readdir(resolved, { withFileTypes: true });
+        const entries = await fs.readdir(normalized, { withFileTypes: true });
         data = entries.map(e => ({ name: e.name, isDir: e.isDirectory() }));
         break;
       }
       case 'exists': {
-        try { await fs.access(resolved); data = true; } catch { data = false; }
+        try { await fs.access(normalized); data = true; } catch { data = false; }
         break;
       }
       default:
         return { tool: 'fileOp', success: false, error: `Unknown operation: ${operation}` };
     }
-    log.debug({ path: resolved, operation }, 'fileOp complete');
+    log.debug({ path: normalized, operation }, 'fileOp complete');
     return { tool: 'fileOp', success: true, data };
   } catch (err) {
     return { tool: 'fileOp', success: false, error: String(err) };

@@ -1,8 +1,13 @@
-// Stub — full implementation in feature/tlci-foundation (will be resolved on merge)
-import type { ExecutionPlan } from '../orchestrator/execution-planner.js';
+/**
+ * PlanCache — Persistent cache for TLCI ExecutionPlans.
+ * Stores plans as JSON files in ~/.zora/plan-cache/ (one file per plan hash).
+ */
+
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { writeAtomic } from '../utils/fs.js';
+import type { ExecutionPlan } from '../orchestrator/execution-planner.js';
 
 export interface CachedPlan { plan: ExecutionPlan; executionCount: number; totalSavingsUSD: number; firstSeenAt: number; lastUsedAt: number; }
 

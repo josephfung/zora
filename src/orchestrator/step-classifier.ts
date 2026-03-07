@@ -23,6 +23,11 @@ export interface StepClassification {
 }
 export type ClassifiedStep = WorkflowStep & StepClassification;
 
+interface TierPattern {
+  pattern: RegExp;
+  toolHint?: string;
+}
+
 const TIER1_PATTERNS: TierPattern[] = [
   { pattern: /\bfetch\b|\bget\b|\bretrieve\b|\bdownload\b|\bread file\b|\bload\b/i, toolHint: 'httpFetch' },
   { pattern: /\bsend\b|\bpost\b|\bwrite\b|\bsave\b|\bstore\b|\bupload\b/i, toolHint: 'httpPost' },
