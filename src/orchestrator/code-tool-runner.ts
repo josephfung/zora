@@ -17,9 +17,36 @@
  */
 
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('code-tool-runner');
+
+function validateUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Blocked URL scheme "${parsed.protocol}" — only http/https allowed`);
+  }
+  const host = parsed.hostname.toLowerCase();
+  const BLOCKED = [
+    /^localhost$/,
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2\d|3[01])\./,
+    /^192\.168\./,
+    /^169\.254\./,   // link-local / AWS metadata
+    /^::1$/,         // IPv6 loopback
+    /^metadata\.google\.internal$/,
+  ];
+  if (BLOCKED.some(r => r.test(host))) {
+    throw new Error(`Blocked host "${host}" — private/metadata addresses not allowed`);
+  }
+}
 
 export interface CodeToolResult {
   tool: string;
@@ -37,6 +64,7 @@ async function runHttpFetch(ctx: StepContext): Promise<CodeToolResult> {
   if (!url) return { tool: 'httpFetch', success: false, error: 'context.url required' };
 
   const headers = (ctx['headers'] as Record<string, string> | undefined) ?? {};
+  try { validateUrl(url); } catch (err) { return { tool: 'httpFetch', success: false, error: String(err) }; }
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -58,6 +86,7 @@ async function runHttpPost(ctx: StepContext): Promise<CodeToolResult> {
 
   const body = ctx['body'];
   const headers = (ctx['headers'] as Record<string, string> | undefined) ?? { 'Content-Type': 'application/json' };
+  try { validateUrl(url); } catch (err) { return { tool: 'httpPost', success: false, error: String(err) }; }
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -160,6 +189,10 @@ async function runFileOp(ctx: StepContext): Promise<CodeToolResult> {
   if (!filePath) return { tool: 'fileOp', success: false, error: 'context.path required' };
 
   const resolved = filePath.replace(/^~/, process.env['HOME'] ?? '');
+  const normalized = path.normalize(resolved);
+  if (normalized !== resolved || resolved.includes('\0')) {
+    return { tool: 'fileOp', success: false, error: 'Path traversal attempt blocked' };
+  }
   const operation = (ctx['operation'] as string | undefined) ?? 'read';
 
   try {
@@ -238,13 +271,17 @@ function runNotify(ctx: StepContext): CodeToolResult {
   return { tool: 'notify', success: true, data: { sent: true, channel, message } };
 }
 
-function runDbQuery(ctx: StepContext): CodeToolResult {
+async function runDbQuery(ctx: StepContext): Promise<CodeToolResult> {
   // Stub — real DB connection is caller-provided via context.execute fn
   const query = ctx['query'] as string | undefined;
   const executeFn = ctx['execute'] as ((q: string) => Promise<unknown>) | undefined;
   if (executeFn && query) {
-    // Caller provided an executor — use it async (returns promise, step runner awaits)
-    return { tool: 'dbQuery', success: true, data: executeFn(query) };
+    try {
+      const rows = await executeFn(query);
+      return { tool: 'dbQuery', success: true, data: rows };
+    } catch (err) {
+      return { tool: 'dbQuery', success: false, error: String(err) };
+    }
   }
   log.info({ query }, 'tlci dbQuery step (stub — provide context.execute for real queries)');
   return { tool: 'dbQuery', success: true, data: { rows: [], stub: true } };
@@ -258,13 +295,13 @@ const SYNC_TOOLS: Record<string, (ctx: StepContext) => CodeToolResult> = {
   compute: runCompute,
   validate: runValidate,
   notify: runNotify,
-  dbQuery: runDbQuery,
 };
 
 const ASYNC_TOOLS: Record<string, (ctx: StepContext) => Promise<CodeToolResult>> = {
   httpFetch: runHttpFetch,
   httpPost: runHttpPost,
   fileOp: runFileOp,
+  dbQuery: runDbQuery,
 };
 
 // ─── Public runner ────────────────────────────────────────────────────────────
