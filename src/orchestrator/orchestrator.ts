@@ -53,6 +53,11 @@ import { IntentCapsuleManager } from '../security/intent-capsule.js';
 import { LeakDetector } from '../security/leak-detector.js';
 import { sanitizeInput } from '../security/prompt-defense.js';
 import { createLogger } from '../utils/logger.js';
+import { TLCIDispatcher, type DispatchResult, type DispatchCallOptions } from './tlci-dispatcher.js';
+import { PlanCache } from '../memory/plan-cache.js';
+import type { WorkflowStep } from './step-classifier.js';
+import { runCodeToolStep } from './code-tool-runner.js';
+import { CostTracker } from '../dashboard/cost-tracker.js';
 
 const log = createLogger('orchestrator');
 
@@ -123,6 +128,12 @@ export class Orchestrator {
   private _consolidationTimeout: ReturnType<typeof setTimeout> | null = null;
 
   private _booted = false;
+
+  // TLCI: lazy-initialized dispatcher and plan cache (additive — does not affect submitTask)
+  private _planCache?: PlanCache;
+  private _tlciDispatcher?: TLCIDispatcher;
+  private _tlciCostTracker?: CostTracker;
+  private _tlciInitP?: Promise<void>; // Promise guard prevents double-init on concurrent calls
 
   constructor(options: OrchestratorOptions) {
     this._config = options.config;
@@ -911,6 +922,105 @@ export class Orchestrator {
     }
 
     return result;
+  }
+
+  /**
+   * submitWorkflow — TLCI-aware multi-step workflow dispatch.
+   *
+   * Routes each step to the cheapest capable tier:
+   *   Tier 1 (code): deterministic code tools — httpFetch, transform, fileOp, etc.
+   *   Tier 2 (slm):  local Ollama model (free cost-tier provider), falls back to frontier
+   *   Tier 3 (frontier): existing Zora provider stack (Claude/Gemini)
+   *
+   * Pass structured parameters for code-tool steps via WorkflowStep.context:
+   *   { id: '1', description: 'fetch user data', context: { url: 'https://api.example.com/users' } }
+   *
+   * Additive — does not touch submitTask.
+   */
+  async submitWorkflow(
+    steps: WorkflowStep[],
+    opts?: DispatchCallOptions,
+  ): Promise<DispatchResult> {
+    await this._ensureTLCI();
+    return this._tlciDispatcher!.dispatch(steps, opts ?? {});
+  }
+
+  /** Expose CostTracker for DashboardServer /api/tlci-stats wiring. */
+  getTLCICostTracker(): CostTracker | undefined {
+    return this._tlciCostTracker;
+  }
+
+  /**
+   * Initialize TLCI subsystem exactly once, even under concurrent submitWorkflow calls.
+   * Uses a promise guard to prevent double-initialization race conditions.
+   */
+  private _ensureTLCI(): Promise<void> {
+    if (!this._tlciInitP) {
+      this._tlciInitP = this._initTLCI();
+    }
+    return this._tlciInitP;
+  }
+
+  private async _initTLCI(): Promise<void> {
+    this._planCache = new PlanCache();
+    await this._planCache.init();
+
+    this._tlciCostTracker = new CostTracker(this._planCache);
+
+    const self = this;
+    const ollamaProvider = this._providers.find(p => p.costTier === 'free');
+
+    this._tlciDispatcher = new TLCIDispatcher(
+      this._planCache,
+      { autonomyLevel: 'full' },
+
+      // Tier 1: real code tools — no LLM call, no token cost
+      async (step) => {
+        const classifiedStep = step as WorkflowStep & { suggestedCodeTool?: string };
+        const result = await runCodeToolStep({
+          id: step.id,
+          suggestedCodeTool: classifiedStep.suggestedCodeTool,
+          context: step.context,
+          description: step.description,
+        });
+        if (!result.success) {
+          log.warn({ stepId: step.id, tool: result.tool, error: result.error }, 'code-tool step failed');
+        }
+        return result;
+      },
+
+      // Tier 2: Ollama (local, free) — route via maxCostTier:'free'
+      // Falls back to frontier only on connection refusal / unavailability
+      async (step) => {
+        if (ollamaProvider) {
+          try {
+            const available = await ollamaProvider.isAvailable();
+            if (available) {
+              return await self.submitTask({ prompt: step.description, maxCostTier: 'free' as CostTier });
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            // Only fall back for connection errors, not execution failures
+            if (/ECONNREFUSED|ENOTFOUND|timeout|unavailable/i.test(msg)) {
+              log.warn({ stepId: step.id, err: msg }, 'Ollama unreachable — falling back to frontier');
+            } else {
+              throw err; // real execution error — propagate
+            }
+          }
+        }
+        log.warn({ stepId: step.id }, 'Ollama unavailable — falling back to frontier for SLM step');
+        return self.submitTask({ prompt: step.description });
+      },
+
+      // Tier 3: frontier — existing provider stack
+      async (step) => self.submitTask({ prompt: step.description }),
+
+      // Approval — auto in full-autonomy mode
+      async (_message) => true,
+
+      // Wire CostTracker so it records every dispatch
+      this._tlciCostTracker,
+    );
   }
 
   /**
