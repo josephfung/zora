@@ -117,11 +117,26 @@ export async function handleListSkills(
   }
 
   const all = await loadSkills(skillsDir);
-  const skills = args.filter
-    ? all.filter(s => s.name.toLowerCase().includes(args.filter!.toLowerCase()))
-    : all;
 
-  log.debug({ total: all.length, filtered: skills.length }, 'list_skills called');
+  // Validate each skill's real path stays within skillsDir (catches symlinks in the dir)
+  const resolvedSkillsDir = await fs.realpath(skillsDir).catch(() => path.resolve(skillsDir));
+  const safe = await Promise.all(
+    all.map(async s => {
+      try {
+        const real = await fs.realpath(s.path).catch(() => path.resolve(s.path));
+        return real.startsWith(resolvedSkillsDir + path.sep) ? s : null;
+      } catch {
+        return null;
+      }
+    })
+  );
+  const valid = safe.filter((s): s is NonNullable<typeof s> => s !== null);
+
+  const skills = args.filter
+    ? valid.filter(s => s.name.toLowerCase().includes(args.filter!.toLowerCase()))
+    : valid;
+
+  log.debug({ total: all.length, safe: valid.length, filtered: skills.length }, 'list_skills called');
 
   return {
     skills: skills.map(s => ({ name: s.name, description: s.description })),
