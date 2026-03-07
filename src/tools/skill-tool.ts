@@ -81,6 +81,7 @@ export interface ListSkillsResult {
   skills: Array<{ name: string; description: string }>;
   count: number;
   skillsDir: string;
+  denied?: boolean;
 }
 
 export interface InvokeSkillArgs {
@@ -100,11 +101,21 @@ const SKILLS_DIR = path.join(os.homedir(), '.claude', 'skills');
 
 /**
  * Lists available skills, optionally filtered by name substring.
+ * If checkPolicy is provided and denies access to the skills directory,
+ * returns an empty list with denied: true rather than throwing.
  */
 export async function handleListSkills(
   args: ListSkillsArgs,
   skillsDir = SKILLS_DIR,
+  checkPolicy?: (path: string) => Promise<boolean>,
 ): Promise<ListSkillsResult> {
+  if (checkPolicy) {
+    const allowed = await checkPolicy(skillsDir);
+    if (!allowed) {
+      return { skills: [], count: 0, skillsDir, denied: true };
+    }
+  }
+
   const all = await loadSkills(skillsDir);
   const skills = args.filter
     ? all.filter(s => s.name.toLowerCase().includes(args.filter!.toLowerCase()))
@@ -122,16 +133,17 @@ export async function handleListSkills(
 /**
  * Loads a skill by name and returns its content.
  * The checkPolicy callback is called before loading — throw or return false to deny.
+ * It is called twice: once for the tool gate, and again for the resolved skill path.
  */
 export async function handleInvokeSkill(
   args: InvokeSkillArgs,
-  checkPolicy: (tool: string, args: Record<string, unknown>) => boolean,
+  checkPolicy: (pathOrTool: string, args?: Record<string, unknown>) => Promise<boolean>,
   skillsDir = SKILLS_DIR,
 ): Promise<InvokeSkillResult> {
   const { name, context = {} } = args;
 
   // Policy check before loading any skill content
-  if (!checkPolicy(INVOKE_SKILL_TOOL_NAME, { name })) {
+  if (!(await checkPolicy(INVOKE_SKILL_TOOL_NAME, { name }))) {
     throw new Error(`Policy denied: invoke_skill("${name}")`);
   }
 
@@ -145,7 +157,25 @@ export async function handleInvokeSkill(
     );
   }
 
-  let content = await fs.readFile(skill.path, 'utf-8');
+  // Validate the resolved skill path to prevent symlink traversal outside the skills directory
+  const resolvedSkillPath = path.resolve(skill.path);
+  const resolvedSkillsDir = path.resolve(skillsDir);
+  if (
+    !resolvedSkillPath.startsWith(resolvedSkillsDir + path.sep) &&
+    resolvedSkillPath !== resolvedSkillsDir
+  ) {
+    throw new Error(
+      `Skill path "${resolvedSkillPath}" is outside the skills directory`,
+    );
+  }
+
+  // Per-skill policy check on the resolved path
+  const pathAllowed = await checkPolicy(resolvedSkillPath);
+  if (!pathAllowed) {
+    throw new Error(`Access to skill at "${resolvedSkillPath}" denied by policy`);
+  }
+
+  let content = await fs.readFile(resolvedSkillPath, 'utf-8');
 
   // Simple template substitution: {{key}} → value
   for (const [key, value] of Object.entries(context)) {
@@ -173,16 +203,22 @@ export function createSkillTools(
   // Build a policy check function from the engine.
   // invoke_skill loads a file from disk — use validatePath to ensure the
   // skill path is within the policy's allowed filesystem boundaries.
-  const checkPolicy = (tool: string, _args: Record<string, unknown>): boolean => {
+  // The function accepts either a tool name (with optional args) or a resolved
+  // filesystem path, and returns a Promise<boolean> in both cases.
+  const checkPolicy = async (
+    pathOrTool: string,
+    _args?: Record<string, unknown>,
+  ): Promise<boolean> => {
     if (!policyEngine) return true; // no engine → allow (safe default for tests)
-    if (tool === INVOKE_SKILL_TOOL_NAME) {
-      // We don't know the resolved path yet (need to scan first), so we validate
-      // the skills directory root. Full path validation happens after scan finds the skill.
-      const result = policyEngine.validatePath(SKILLS_DIR);
-      if (!result.allowed) {
-        log.warn({ reason: result.reason }, 'invoke_skill blocked by policy');
-        return false;
-      }
+    // For any call, validate the path or skills directory via validatePath.
+    // When called with a tool name, we validate the skills directory root.
+    // When called with a resolved skill path, we validate that specific path.
+    const pathToCheck =
+      pathOrTool === INVOKE_SKILL_TOOL_NAME ? SKILLS_DIR : pathOrTool;
+    const result = policyEngine.validatePath(pathToCheck);
+    if (!result.allowed) {
+      log.warn({ path: pathToCheck, reason: result.reason }, 'skill access blocked by policy');
+      return false;
     }
     return true;
   };
@@ -195,7 +231,7 @@ export function createSkillTools(
       const args: ListSkillsArgs = {
         filter: input['filter'] as string | undefined,
       };
-      return handleListSkills(args);
+      return handleListSkills(args, SKILLS_DIR, checkPolicy);
     },
   };
 
@@ -209,7 +245,7 @@ export function createSkillTools(
         context: input['context'] as Record<string, string> | undefined,
       };
       const result = await handleInvokeSkill(args, checkPolicy);
-      // Return content as top-level string so the LLM receives it directly in context
+      // Return a structured object with skillName, content, and path fields
       return { skillName: result.skillName, content: result.content, path: result.path };
     },
   };

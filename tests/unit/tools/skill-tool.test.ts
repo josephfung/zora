@@ -2,7 +2,9 @@
  * Tests for skill-tool.ts — list_skills and invoke_skill agent-callable tools.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import os from 'node:os';
+import path from 'node:path';
+import { describe, it, expect, vi } from 'vitest';
 import {
   handleListSkills,
   handleInvokeSkill,
@@ -15,19 +17,25 @@ import {
 
 // ─── Mocks ─────────────────────────────────────────────────────────────────────
 
+// Skill paths are constructed relative to the passed skillsDir so the resolved-path
+// traversal check in handleInvokeSkill stays within whichever directory is used.
+
 vi.mock('../../../src/skills/skill-loader.js', () => ({
-  loadSkills: vi.fn().mockResolvedValue([
-    {
-      name: 'sophia-image-generator',
-      description: 'Generate Sophia images',
-      path: '/mock/sophia/SKILL.md',
-    },
-    {
-      name: 'storybrand-content-engine',
-      description: 'Create StoryBrand content',
-      path: '/mock/story/SKILL.md',
-    },
-  ]),
+  loadSkills: vi.fn().mockImplementation(async (dir?: string) => {
+    const base = dir ?? path.join(os.homedir(), '.claude', 'skills');
+    return [
+      {
+        name: 'sophia-image-generator',
+        description: 'Generate Sophia images',
+        path: path.join(base, 'sophia-image-generator', 'SKILL.md'),
+      },
+      {
+        name: 'storybrand-content-engine',
+        description: 'Create StoryBrand content',
+        path: path.join(base, 'storybrand-content-engine', 'SKILL.md'),
+      },
+    ];
+  }),
 }));
 
 vi.mock('node:fs/promises', () => ({
@@ -105,23 +113,30 @@ describe('handleListSkills', () => {
 // ─── handleInvokeSkill ────────────────────────────────────────────────────────
 
 describe('handleInvokeSkill', () => {
-  const allowAll = (_tool: string, _args: Record<string, unknown>) => true;
-  const denyAll = (_tool: string, _args: Record<string, unknown>) => false;
+  // Mock skills use paths under /mock — pass /mock as the skillsDir so the
+  // path traversal check treats /mock as the boundary.
+  const MOCK_SKILLS_DIR = '/mock';
+  const allowAll = async (_pathOrTool: string, _args?: Record<string, unknown>) =>
+    Promise.resolve(true);
+  const denyAll = async (_pathOrTool: string, _args?: Record<string, unknown>) =>
+    Promise.resolve(false);
 
   it('returns skill content', async () => {
     const result = await handleInvokeSkill(
       { name: 'sophia-image-generator' },
       allowAll,
+      MOCK_SKILLS_DIR,
     );
     expect(result.skillName).toBe('sophia-image-generator');
     expect(result.content).toContain('Skill content');
-    expect(result.path).toBe('/mock/sophia/SKILL.md');
+    expect(result.path).toBe(path.join(MOCK_SKILLS_DIR, 'sophia-image-generator', 'SKILL.md'));
   });
 
   it('applies template variable substitution', async () => {
     const result = await handleInvokeSkill(
       { name: 'sophia-image-generator', context: { name: 'World' } },
       allowAll,
+      MOCK_SKILLS_DIR,
     );
     expect(result.content).toContain('Hello World!');
     expect(result.content).not.toContain('{{name}}');
@@ -136,6 +151,7 @@ describe('handleInvokeSkill', () => {
     const result = await handleInvokeSkill(
       { name: 'sophia-image-generator', context: { greeting: 'Hello', target: 'World' } },
       allowAll,
+      MOCK_SKILLS_DIR,
     );
     expect(result.content).toBe('Hello World!');
     // restore for next tests
@@ -145,19 +161,19 @@ describe('handleInvokeSkill', () => {
 
   it('throws when policy denies', async () => {
     await expect(
-      handleInvokeSkill({ name: 'sophia-image-generator' }, denyAll),
+      handleInvokeSkill({ name: 'sophia-image-generator' }, denyAll, MOCK_SKILLS_DIR),
     ).rejects.toThrow('Policy denied');
   });
 
   it('throws when skill not found', async () => {
     await expect(
-      handleInvokeSkill({ name: 'nonexistent-skill' }, allowAll),
+      handleInvokeSkill({ name: 'nonexistent-skill' }, allowAll, MOCK_SKILLS_DIR),
     ).rejects.toThrow('not found');
   });
 
   it('includes available skills in not-found error message', async () => {
     await expect(
-      handleInvokeSkill({ name: 'nonexistent-skill' }, allowAll),
+      handleInvokeSkill({ name: 'nonexistent-skill' }, allowAll, MOCK_SKILLS_DIR),
     ).rejects.toThrow('sophia-image-generator');
   });
 });
