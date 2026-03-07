@@ -1,18 +1,18 @@
-/**
- * StepClassifier — Classifies workflow steps into TLCI tiers.
- * Tier 1: Code tools (free), Tier 2: Ollama SLM (~$0.0001), Tier 3: Frontier LLM (~$0.003)
- */
-
+// Stub — full implementation in feature/tlci-foundation (will be resolved on merge)
 export type StepTier = 'code' | 'slm' | 'frontier';
-
 export interface WorkflowStep {
   id: string;
   description: string;
   inputType?: string;
   outputType?: string;
   context?: Record<string, unknown>;
+  tier?: StepTier;
+  estimatedCostUSD?: number;
+  suggestedCodeTool?: string;
+  suggestedSLMPrompt?: string;
+  confidence?: 'high' | 'medium' | 'low';
+  rationale?: string;
 }
-
 export interface StepClassification {
   tier: StepTier;
   rationale: string;
@@ -21,7 +21,6 @@ export interface StepClassification {
   suggestedSLMPrompt?: string;
   confidence: 'high' | 'medium' | 'low';
 }
-
 export type ClassifiedStep = WorkflowStep & StepClassification;
 
 interface TierPattern {
@@ -111,5 +110,5 @@ export function classifyStep(step: WorkflowStep): StepClassification {
 }
 
 export function classifySteps(steps: WorkflowStep[]): ClassifiedStep[] {
-  return steps.map(step => ({ ...step, ...classifyStep(step) }));
+  return steps.map(s => ({ ...s, ...classifyStep(s) }));
 }

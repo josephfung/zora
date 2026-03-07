@@ -9,13 +9,7 @@ import os from 'node:os';
 import { writeAtomic } from '../utils/fs.js';
 import type { ExecutionPlan } from '../orchestrator/execution-planner.js';
 
-export interface CachedPlan {
-  plan: ExecutionPlan;
-  executionCount: number;
-  totalSavingsUSD: number;
-  firstSeenAt: number;
-  lastUsedAt: number;
-}
+export interface CachedPlan { plan: ExecutionPlan; executionCount: number; totalSavingsUSD: number; firstSeenAt: number; lastUsedAt: number; }
 
 export class PlanCache {
   private readonly _cacheDir: string;

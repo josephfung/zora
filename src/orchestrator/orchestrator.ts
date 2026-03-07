@@ -65,6 +65,7 @@ import { PlanCache } from '../memory/plan-cache.js';
 import type { WorkflowStep } from './step-classifier.js';
 import { runCodeToolStep } from './code-tool-runner.js';
 import { CostTracker } from '../dashboard/cost-tracker.js';
+import { createPlanWorkflowTool } from '../tools/planning-tool.js';
 
 const log = createLogger('orchestrator');
 
@@ -1357,7 +1358,13 @@ export class Orchestrator {
     // Skill tools: list_skills and invoke_skill for agent-callable skill library
     const skillTools = createSkillTools(this._policyEngine);
 
-    return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools];
+    // Wire plan_workflow tool — bound to submitWorkflow so the LLM can decompose
+    // and optionally execute TLCI workflows mid-conversation.
+    const planWorkflowTool = createPlanWorkflowTool(
+      (steps, opts) => this.submitWorkflow(steps, opts),
+    );
+
+    return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools, planWorkflowTool];
   }
 
   /**

@@ -1,35 +1,17 @@
-/**
- * ExecutionPlanner — Decomposes workflow into TLCI tiers, costs, and hashes for caching.
- */
-
+// Stub — full implementation in feature/tlci-foundation (will be resolved on merge)
 import { createHash } from 'node:crypto';
 import { classifySteps, type ClassifiedStep, type WorkflowStep, type StepTier } from './step-classifier.js';
 
-export interface TierBreakdown {
-  code: number;
-  slm: number;
-  frontier: number;
-}
-
-export interface CostComparison {
-  tlciEstimate: number;
-  allLLMEstimate: number;
-  savingsUSD: number;
-  savingsPct: number;
-}
-
+export interface TierBreakdown { code: number; slm: number; frontier: number; }
+export interface CostComparison { tlciEstimate: number; allLLMEstimate: number; savingsUSD: number; savingsPct: number; }
 export interface ExecutionPlan {
-  planId: string;
-  planHash: string;
-  steps: ClassifiedStep[];
-  tierBreakdown: TierBreakdown;
-  costComparison: CostComparison;
-  createdAt: number;
-  approvedAt?: number;
-  approved: boolean;
+  planId: string; planHash: string; steps: ClassifiedStep[];
+  tierBreakdown: TierBreakdown; costComparison: CostComparison;
+  createdAt: number; approvedAt?: number; approved: boolean;
 }
 
-const ALL_LLM_COST_PER_STEP = 0.065;
+// StepTier imported for type-checking — used by callers via this module
+export type { StepTier };
 
 /**
  * Compute a deterministic plan hash from step descriptions and type metadata.
@@ -47,14 +29,9 @@ export function computePlanHash(steps: WorkflowStep[]): string {
 
 export function buildExecutionPlan(steps: WorkflowStep[]): ExecutionPlan {
   const classified = classifySteps(steps);
-
-  const tierBreakdown: TierBreakdown = classified.reduce(
-    (acc, s) => { acc[s.tier]++; return acc; },
-    { code: 0, slm: 0, frontier: 0 } as TierBreakdown
-  );
-
+  const tierBreakdown = classified.reduce((acc, s) => { acc[s.tier]++; return acc; }, { code: 0, slm: 0, frontier: 0 } as TierBreakdown);
   const tlciEstimate = classified.reduce((sum, s) => sum + s.estimatedCostUSD, 0);
-  const allLLMEstimate = steps.length * ALL_LLM_COST_PER_STEP;
+  const allLLMEstimate = steps.length * 0.065;
   const savingsUSD = allLLMEstimate - tlciEstimate;
   const savingsPct = allLLMEstimate === 0 ? 0 : Math.round((savingsUSD / allLLMEstimate) * 100);
 
