@@ -32,6 +32,12 @@ import { ErrorNormalizer } from '../lib/error-normalizer.js';
 import { NegativeCache } from '../services/negative-cache.js';
 import { ErrorPatternDetector } from './error-pattern-detector.js';
 import { HookRunner } from '../hooks/hook-runner.js';
+import { ToolHookRunner } from '../hooks/tool-hook-runner.js';
+import type { ToolHook } from '../hooks/tool-hook-runner.js';
+import { ShellSafetyHook } from '../hooks/built-in/shell-safety.js';
+import { AuditLogHook } from '../hooks/built-in/audit-log.js';
+import { RateLimitHook } from '../hooks/built-in/rate-limit.js';
+import { SecretRedactHook } from '../hooks/built-in/secret-redact.js';
 import { Router } from './router.js';
 import { FailoverController } from './failover-controller.js';
 import { RetryQueue } from './retry-queue.js';
@@ -109,6 +115,9 @@ export class Orchestrator {
 
   // ORCH-12: Lifecycle hooks
   private _hookRunner: HookRunner = new HookRunner();
+
+  // Tool-level lifecycle hooks
+  private _toolHookRunner: ToolHookRunner = new ToolHookRunner();
 
   // ERR-07: Error normalizer for safe error replay
   private readonly _errorNormalizer: ErrorNormalizer = new ErrorNormalizer();
@@ -316,6 +325,15 @@ export class Orchestrator {
       }
       scheduleConsolidation();
     }, 30 * 1000);
+
+    // Register default tool-level hooks
+    this._toolHookRunner.register(ShellSafetyHook);
+    this._toolHookRunner.register(new AuditLogHook());
+    this._toolHookRunner.register(new RateLimitHook([
+      { tool: 'bash', maxCalls: 60, windowMs: 60_000 },
+      { tool: 'http_request', maxCalls: 100, windowMs: 60_000 },
+    ]));
+    this._toolHookRunner.register(SecretRedactHook);
 
     this._booted = true;
   }
@@ -570,6 +588,9 @@ export class Orchestrator {
     let consecutiveNonToolTurns = 0;
     const STALE_LOOP_THRESHOLD = 3;
 
+    // Tool-level hook tracking: map toolCallId → call start timestamp
+    const _toolCallStartTimes = new Map<string, number>();
+
     // Event batching: buffer session writes, flush every 500ms or on done/error.
     // Wrapped in try/finally to ensure close() runs on ALL exit paths including failover.
     const bufferedWriter = new BufferedSessionWriter(this._sessionManager, taskContext.jobId, 500);
@@ -646,6 +667,34 @@ export class Orchestrator {
             // ERR-09: Stale-state loop — tool call resets the consecutive counter
             toolCalledThisTurn = true;
             consecutiveNonToolTurns = 0;
+
+            // Tool-level before-hooks: record start time and run before-hooks
+            _toolCallStartTimes.set(toolCallContent.toolCallId, Date.now());
+            try {
+              const hookBefore = await this._toolHookRunner.runBefore({
+                jobId: taskContext.jobId,
+                tool: toolCallContent.tool,
+                arguments: toolCallContent.arguments as Record<string, unknown> ?? {},
+              });
+              if (!hookBefore.allow) {
+                // Inject a synthetic tool_result indicating the tool was blocked
+                const blockedEvent: AgentEvent = {
+                  type: 'tool_result',
+                  timestamp: new Date(),
+                  source: 'tool-hook-runner',
+                  content: {
+                    toolCallId: toolCallContent.toolCallId,
+                    result: null,
+                    error: `Tool call blocked by hook: ${toolCallContent.tool}`,
+                  } satisfies ToolResultEventContent,
+                };
+                bufferedWriter.append(blockedEvent);
+                taskContext.history.push(blockedEvent);
+                if (onEvent) onEvent(blockedEvent);
+              }
+            } catch (err) {
+              log.error({ err, tool: toolCallContent.tool, jobId: taskContext.jobId }, 'tool-hook runBefore error (non-critical)');
+            }
           }
 
           // ERR-10: Pattern detection on tool results + ERR-12: record failures/successes
@@ -700,6 +749,21 @@ export class Orchestrator {
 
             // ERR-09: Stale-state — tool_result is a "turn", but only counts if no tool call followed
             // (tracked by text events below)
+
+            // Tool-level after-hooks: run after every tool result
+            const _startMs = _toolCallStartTimes.get(toolResultContent.toolCallId);
+            _toolCallStartTimes.delete(toolResultContent.toolCallId);
+            const _matchingCallForHook = matchingCall;
+            if (_matchingCallForHook) {
+              const _callContentForHook = _matchingCallForHook.content as ToolCallEventContent;
+              await this._toolHookRunner.runAfter({
+                jobId: taskContext.jobId,
+                tool: _callContentForHook.tool,
+                arguments: _callContentForHook.arguments as Record<string, unknown> ?? {},
+                result: toolResultContent.result,
+                durationMs: _startMs !== undefined ? Date.now() - _startMs : undefined,
+              });
+            }
           }
 
           // (ERR-09: stale-state tracking is done on 'done' events below)
@@ -1338,6 +1402,11 @@ export class Orchestrator {
   /** ORCH-12: Access the hook runner for registering lifecycle hooks */
   get hookRunner(): HookRunner {
     return this._hookRunner;
+  }
+
+  /** Register a tool-level lifecycle hook (fires before/after every tool call) */
+  registerToolHook(hook: ToolHook): void {
+    this._toolHookRunner.register(hook);
   }
 
   /** ORCH-14: Set a custom context transform function */
