@@ -8,16 +8,26 @@ import type { ToolHook, ToolCallContext, ToolHookResult } from '../tool-hook-run
 const SECRET_KEY_PATTERN = /key|token|secret|password|auth|bearer|credential/i;
 const SECRET_VALUE_PATTERN = /^(sk-|ghp_|xox[baprs]-|eyJ|AIza)[A-Za-z0-9_-]{10,}/;
 
-function redactValue(key: string, value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  if (SECRET_KEY_PATTERN.test(key) || SECRET_VALUE_PATTERN.test(value)) return '[REDACTED]';
+function redactDeep(key: string, value: unknown): unknown {
+  if (typeof value === 'string') {
+    if (SECRET_KEY_PATTERN.test(key) || SECRET_VALUE_PATTERN.test(value)) return '[REDACTED]';
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, i) => redactDeep(String(i), item));
+  }
+  if (typeof value === 'object' && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, redactDeep(k, v)])
+    );
+  }
   return value;
 }
 
 function redactObj(obj: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(obj).map(([k, v]) => [k, redactValue(k, v)])
-  );
+    Object.entries(obj).map(([k, v]) => [k, redactDeep(k, v)])
+  ) as Record<string, unknown>;
 }
 
 export const SecretRedactHook: ToolHook = {

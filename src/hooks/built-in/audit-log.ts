@@ -11,7 +11,10 @@ import type { ToolHook, ToolCallContext, ToolHookResult } from '../tool-hook-run
 function redactSecrets(obj: unknown, depth = 0): unknown {
   if (depth > 5 || obj === null || obj === undefined) return obj;
   if (typeof obj === 'string') {
-    return obj.replace(/(?:key|token|secret|password|auth|bearer)\s*[:=]\s*\S+/gi, '[REDACTED]');
+    return obj.replace(/(?:key|token|secret|password|auth|bearer)\s*[:=]\s*[^\s,}"']+/gi, (m) => {
+      const colonIdx = m.search(/[:=]/);
+      return m.slice(0, colonIdx + 1) + ' [REDACTED]';
+    });
   }
   if (Array.isArray(obj)) return obj.map(v => redactSecrets(v, depth + 1));
   if (typeof obj === 'object') {
@@ -41,12 +44,8 @@ export class AuditLogHook implements ToolHook {
       durationMs: ctx.durationMs,
     });
 
-    try {
-      await fs.mkdir(path.dirname(this._logPath), { recursive: true });
-      await fs.appendFile(this._logPath, entry + '\n', 'utf-8');
-    } catch {
-      // Audit log failure must never block execution
-    }
+    await fs.mkdir(path.dirname(this._logPath), { recursive: true });
+    await fs.appendFile(this._logPath, entry + '\n', 'utf-8');
 
     return { allow: true };
   }

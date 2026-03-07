@@ -599,8 +599,12 @@ export class Orchestrator {
       try {
         // Execute via the provider's async generator
         for await (const event of provider.execute(taskContext)) {
-          // R8: Persist events via buffered writer (batched disk I/O)
-          bufferedWriter.append(event);
+          // R8: Persist events via buffered writer (batched disk I/O).
+          // tool_call events are deferred until after before-hooks run so
+          // SecretRedactHook can modify args before they hit the log.
+          if (event.type !== 'tool_call') {
+            bufferedWriter.append(event);
+          }
 
           // Feed events to context compressor for rolling compression
           if (compressor) {
@@ -668,7 +672,9 @@ export class Orchestrator {
             toolCalledThisTurn = true;
             consecutiveNonToolTurns = 0;
 
-            // Tool-level before-hooks: record start time and run before-hooks
+            // Tool-level before-hooks: record start time and run before-hooks.
+            // Logging happens AFTER hooks so SecretRedactHook can redact args
+            // before they are written to disk or the session log.
             _toolCallStartTimes.set(toolCallContent.toolCallId, Date.now());
             try {
               const hookBefore = await this._toolHookRunner.runBefore({
@@ -676,6 +682,15 @@ export class Orchestrator {
                 tool: toolCallContent.tool,
                 arguments: toolCallContent.arguments as Record<string, unknown> ?? {},
               });
+
+              // Log the event now (with potentially-redacted args from hooks)
+              const hookedArgs = hookBefore.args;
+              const loggedEvent: AgentEvent = hookedArgs !== (toolCallContent.arguments ?? {})
+                ? { ...event, content: { ...toolCallContent, arguments: hookedArgs } }
+                : event;
+              bufferedWriter.append(loggedEvent);
+              log.debug({ jobId: taskContext.jobId, tool: toolCallContent.tool, arguments: hookedArgs }, 'tool call');
+
               if (!hookBefore.allow) {
                 // Inject a synthetic tool_result indicating the tool was blocked
                 const blockedEvent: AgentEvent = {
@@ -693,6 +708,8 @@ export class Orchestrator {
                 if (onEvent) onEvent(blockedEvent);
               }
             } catch (err) {
+              // If hooks fail, still log the original event so the call isn't lost
+              bufferedWriter.append(event);
               log.error({ err, tool: toolCallContent.tool, jobId: taskContext.jobId }, 'tool-hook runBefore error (non-critical)');
             }
           }

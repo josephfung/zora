@@ -22,7 +22,12 @@ export const ShellSafetyHook: ToolHook = {
   tools: ['bash', 'shell', 'run_command', 'execute_bash'],
 
   async run(ctx: ToolCallContext): Promise<ToolHookResult> {
-    const cmd = String(ctx.arguments['command'] ?? ctx.arguments['cmd'] ?? '');
+    const rawCmd = String(ctx.arguments['command'] ?? ctx.arguments['cmd'] ?? '');
+    // Normalize path traversal segments (e.g. /tmp/../home → /home) before
+    // pattern matching so that directory-traversal bypasses are caught.
+    const cmd = rawCmd
+      .replace(/\/[^/\s]+\/\.\.\//g, '/')
+      .replace(/\/\.\.\//g, '/');
 
     for (const { pattern, reason } of BLOCKED_PATTERNS) {
       if (pattern.test(cmd)) {
