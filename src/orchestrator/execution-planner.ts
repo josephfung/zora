@@ -42,7 +42,7 @@ export function buildExecutionPlan(steps: WorkflowStep[]): ExecutionPlan {
   const tlciEstimate = classified.reduce((sum, s) => sum + s.estimatedCostUSD, 0);
   const allLLMEstimate = steps.length * ALL_LLM_COST_PER_STEP;
   const savingsUSD = allLLMEstimate - tlciEstimate;
-  const savingsPct = Math.round((savingsUSD / allLLMEstimate) * 100);
+  const savingsPct = allLLMEstimate === 0 ? 0 : Math.round((savingsUSD / allLLMEstimate) * 100);
 
   const planHash = createHash('sha256')
     .update(steps.map(s => s.description.trim().toLowerCase()).join('||'))

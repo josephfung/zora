@@ -31,7 +31,8 @@ export function TLCIPanel() {
     const fetchStats = async () => {
       try {
         const res = await fetch('/api/tlci-stats');
-        if (res.status === 503) { setEnabled(false); return; }
+        // Hide panel if TLCI not enabled (503) or auth not configured for this route (401/403)
+        if (res.status === 503 || res.status === 401 || res.status === 403) { setEnabled(false); return; }
         if (!res.ok) return;
         setSnapshot(await res.json() as TLCISnapshot);
       } catch {
@@ -54,10 +55,11 @@ export function TLCIPanel() {
 
   const total = snapshot.last100StepsTierDistribution.code +
     snapshot.last100StepsTierDistribution.slm +
-    snapshot.last100StepsTierDistribution.frontier || 1;
-  const codePct = Math.round((snapshot.last100StepsTierDistribution.code / total) * 100);
-  const slmPct = Math.round((snapshot.last100StepsTierDistribution.slm / total) * 100);
-  const frontierPct = 100 - codePct - slmPct;
+    snapshot.last100StepsTierDistribution.frontier;
+  // No steps yet — show 0% for all tiers rather than a misleading 100% Frontier bar
+  const codePct = total === 0 ? 0 : Math.round((snapshot.last100StepsTierDistribution.code / total) * 100);
+  const slmPct = total === 0 ? 0 : Math.round((snapshot.last100StepsTierDistribution.slm / total) * 100);
+  const frontierPct = total === 0 ? 0 : 100 - codePct - slmPct;
 
   return (
     <div className="rounded-lg border border-neutral-700 bg-neutral-800/50 p-4 space-y-3">

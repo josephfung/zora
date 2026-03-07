@@ -84,7 +84,11 @@ export class TLCIDispatcher {
       );
     }
 
-    if (this._options.autonomyLevel !== 'full') {
+    if (this._options.autonomyLevel === 'full') {
+      // Full autonomy: auto-approve without prompting
+      plan.approved = true;
+      plan.approvedAt = Date.now();
+    } else {
       const approved = await this._approvalFn(formatPlanForApproval(plan));
       if (!approved) throw new Error('Execution plan rejected by user');
       plan.approved = true;
