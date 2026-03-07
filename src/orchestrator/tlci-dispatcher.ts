@@ -3,13 +3,16 @@
  * Additive layer — does not replace Zora dispatch; exposes submitWorkflow() on Orchestrator.
  */
 
-import { createHash } from 'node:crypto';
 import { createLogger } from '../utils/logger.js';
 import type { WorkflowStep, StepTier } from './step-classifier.js';
-import { buildExecutionPlan, formatPlanForApproval, type ExecutionPlan } from './execution-planner.js';
+import { buildExecutionPlan, computePlanHash, formatPlanForApproval, type ExecutionPlan } from './execution-planner.js';
 import { PlanCache } from '../memory/plan-cache.js';
+import type { CostTracker } from '../dashboard/cost-tracker.js';
 
 const log = createLogger('tlci-dispatcher');
+
+/** Cost per token for frontier LLM (used for rough token spend estimate). */
+const FRONTIER_COST_PER_TOKEN = 0.000003;
 
 export type AutonomyLevel = 'ask' | 'confirm_plan' | 'full';
 
@@ -48,15 +51,13 @@ export class TLCIDispatcher {
     private readonly _ollamaRunner: StepRunner,
     private readonly _frontierRunner: StepRunner,
     private readonly _approvalFn: ApprovalFn,
+    private readonly _costTracker?: CostTracker,
   ) {}
 
   async dispatch(steps: WorkflowStep[], callOpts: DispatchCallOptions = {}): Promise<DispatchResult> {
     const startTime = Date.now();
 
-    const planHash = createHash('sha256')
-      .update(steps.map(s => s.description.trim().toLowerCase()).join('||'))
-      .digest('hex')
-      .slice(0, 16);
+    const planHash = computePlanHash(steps);
 
     let plan: ExecutionPlan | null = null;
     let cacheHit = false;
@@ -74,6 +75,10 @@ export class TLCIDispatcher {
       await this._planCache.set(plan);
       log.debug({ planHash: plan.planHash, steps: steps.length }, 'plan built and cached');
     }
+
+    // Record metrics — plan is a template object; execution-specific state (approved, etc.)
+    // lives only in-memory for this dispatch and is not persisted back to the cache.
+    this._costTracker?.recordPlanRequest(cacheHit, plan);
 
     if (
       callOpts.budgetLimitUSD !== undefined &&
@@ -127,7 +132,7 @@ export class TLCIDispatcher {
         case 'frontier':
           await this._frontierRunner(step);
           actualCostUSD += step.estimatedCostUSD;
-          tokensSpent += Math.round(step.estimatedCostUSD / 0.000003);
+          tokensSpent += Math.round(step.estimatedCostUSD / FRONTIER_COST_PER_TOKEN);
           break;
       }
     }

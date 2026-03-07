@@ -38,6 +38,7 @@ describe('classifyStep', () => {
       it(`classifies "${description}" as slm`, () => {
         const result = classifyStep({ id: '1', description });
         expect(result.tier).toBe('slm');
+        expect(result.estimatedCostUSD).toBe(0.0001);
       });
     });
   });

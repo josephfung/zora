@@ -76,3 +76,12 @@ state/
 # RuVector intelligence data
 .ruvector/
 .claude/statusline.sh
+
+# Workspace-specific files — not part of Zora repo
+.claude/statusline-command.sh
+.claude/worktrees/
+.ruvector
+HANDOFF-*.md
+docs/interview-prep-*.md
+specs/
+zora-linkedin-*.md
