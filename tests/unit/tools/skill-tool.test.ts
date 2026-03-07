@@ -42,6 +42,8 @@ vi.mock('node:fs/promises', () => ({
   default: {
     readFile: vi.fn().mockResolvedValue('# Skill content\n\nHello {{name}}!'),
     mkdir: vi.fn(),
+    // realpath: return path unchanged (mock env has no real symlinks to resolve)
+    realpath: vi.fn().mockImplementation((p: string) => Promise.resolve(p)),
   },
 }));
 

@@ -157,15 +157,24 @@ export async function handleInvokeSkill(
     );
   }
 
-  // Validate the resolved skill path to prevent symlink traversal outside the skills directory
-  const resolvedSkillPath = path.resolve(skill.path);
-  const resolvedSkillsDir = path.resolve(skillsDir);
+  // Use fs.realpath() (not path.resolve) to follow symlinks before checking boundaries.
+  // path.resolve() only normalizes segments; a SKILL.md that is a symlink to /etc/passwd
+  // would pass a path.resolve() check but fail here.
+  // Falls back to path.resolve() when the path doesn't yet exist (e.g. tests with mocks)
+  // — symlinks to non-existent targets can't be exploited since readFile will also fail.
+  let resolvedSkillPath: string;
+  try {
+    resolvedSkillPath = await fs.realpath(skill.path);
+  } catch {
+    resolvedSkillPath = path.resolve(skill.path);
+  }
+  const resolvedSkillsDir = await fs.realpath(skillsDir).catch(() => path.resolve(skillsDir));
   if (
     !resolvedSkillPath.startsWith(resolvedSkillsDir + path.sep) &&
     resolvedSkillPath !== resolvedSkillsDir
   ) {
     throw new Error(
-      `Skill path "${resolvedSkillPath}" is outside the skills directory`,
+      `Skill path "${resolvedSkillPath}" is outside the skills directory (symlink traversal blocked)`,
     );
   }
 
