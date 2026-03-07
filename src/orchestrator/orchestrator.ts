@@ -1019,19 +1019,6 @@ export class Orchestrator {
    *
    * Additive — does not touch submitTask.
    */
-  /**
-   * submitWorkflow — TLCI-aware multi-step workflow dispatch.
-   *
-   * Routes each step to the cheapest capable tier:
-   *   Tier 1 (code): deterministic code tools — httpFetch, transform, fileOp, etc.
-   *   Tier 2 (slm):  local Ollama model (qwen3:8b or configured model), falls back to frontier
-   *   Tier 3 (frontier): existing Zora provider stack (Claude/Gemini)
-   *
-   * Pass structured parameters for code-tool steps via WorkflowStep.context:
-   *   { id: '1', description: 'fetch user data', context: { url: 'https://...', tool: 'httpFetch' } }
-   *
-   * Additive — does not touch submitTask.
-   */
   async submitWorkflow(
     steps: WorkflowStep[],
     opts?: DispatchCallOptions,

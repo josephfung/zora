@@ -13,6 +13,20 @@ export interface ExecutionPlan {
 // StepTier imported for type-checking — used by callers via this module
 export type { StepTier };
 
+/**
+ * Compute a deterministic plan hash from step descriptions and type metadata.
+ * Excludes `context` (runtime state) — only classification-relevant fields are hashed.
+ * 32 hex chars (128 bits) to reduce collision risk.
+ */
+export function computePlanHash(steps: WorkflowStep[]): string {
+  return createHash('sha256')
+    .update(steps.map(s =>
+      `${s.description.trim().toLowerCase()}|${s.inputType ?? ''}|${s.outputType ?? ''}`
+    ).join('||'))
+    .digest('hex')
+    .slice(0, 32);
+}
+
 export function buildExecutionPlan(steps: WorkflowStep[]): ExecutionPlan {
   const classified = classifySteps(steps);
   const tierBreakdown = classified.reduce((acc, s) => { acc[s.tier]++; return acc; }, { code: 0, slm: 0, frontier: 0 } as TierBreakdown);
@@ -21,10 +35,7 @@ export function buildExecutionPlan(steps: WorkflowStep[]): ExecutionPlan {
   const savingsUSD = allLLMEstimate - tlciEstimate;
   const savingsPct = allLLMEstimate === 0 ? 0 : Math.round((savingsUSD / allLLMEstimate) * 100);
 
-  const planHash = createHash('sha256')
-    .update(steps.map(s => s.description.trim().toLowerCase()).join('||'))
-    .digest('hex')
-    .slice(0, 16);
+  const planHash = computePlanHash(steps);
 
   const planId = `plan_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 
@@ -40,7 +51,7 @@ export function buildExecutionPlan(steps: WorkflowStep[]): ExecutionPlan {
 }
 
 const TIER_ICONS: Record<StepTier, string> = {
-  code: '⚙️ ',
+  code: '⚙️',
   slm: '🔵',
   frontier: '🟣',
 };
@@ -51,6 +62,12 @@ const TIER_LABELS: Record<StepTier, string> = {
   frontier: 'AI    ',
 };
 
+/** Strip ANSI escape sequences from user-supplied text to prevent terminal injection. */
+function sanitize(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+}
+
 export function formatPlanForApproval(plan: ExecutionPlan): string {
   const { steps, tierBreakdown, costComparison } = plan;
   const lines: string[] = [
@@ -59,7 +76,7 @@ export function formatPlanForApproval(plan: ExecutionPlan): string {
     `│  Tiers:      ⚙️  ${tierBreakdown.code} code   🔵 ${tierBreakdown.slm} local   🟣 ${tierBreakdown.frontier} frontier`,
     `├───────────────────────────────────────────────────────`,
     ...steps.map((s, i) =>
-      `│  ${String(i + 1).padStart(2)}. ${TIER_ICONS[s.tier]} [${TIER_LABELS[s.tier]}] ${s.description}`
+      `│  ${String(i + 1).padStart(2)}. ${TIER_ICONS[s.tier]} [${TIER_LABELS[s.tier]}] ${sanitize(s.description)}`
     ),
     `└───────────────────────────────────────────────────────`,
     `  Proceed? (y/n/edit)`,
