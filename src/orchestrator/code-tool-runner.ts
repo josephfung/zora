@@ -34,6 +34,10 @@ function validateUrl(url: string): void {
     throw new Error(`Blocked URL scheme "${parsed.protocol}" — only http/https allowed`);
   }
   const host = parsed.hostname.toLowerCase();
+  // Block literal private/metadata IP ranges and known internal hostnames.
+  // KNOWN LIMITATION: DNS-rebinding attacks (public hostname → private IP) are not
+  // prevented here because pre-resolution DNS checks have an inherent TOCTOU race.
+  // For production hardening, use a network-level egress proxy or firewall instead.
   const BLOCKED = [
     /^localhost$/,
     /^127\./,
