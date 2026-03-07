@@ -48,6 +48,7 @@ import { SteeringManager } from '../steering/steering-manager.js';
 import { MemoryManager } from '../memory/memory-manager.js';
 import { ExtractionPipeline } from '../memory/extraction-pipeline.js';
 import { createMemoryTools } from '../tools/memory-tools.js';
+import { createSkillTools } from '../tools/skill-tool.js';
 import { ValidationPipeline } from '../memory/validation-pipeline.js';
 import { ContextCompressor } from '../memory/context-compressor.js';
 import { ObservationStore } from '../memory/observation-store.js';
@@ -1353,7 +1354,10 @@ export class Orchestrator {
       },
     };
 
-    return [...permissionTools, ...memoryTools, recallContextTool];
+    // Skill tools: list_skills and invoke_skill for agent-callable skill library
+    const skillTools = createSkillTools(this._policyEngine);
+
+    return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools];
   }
 
   /**
