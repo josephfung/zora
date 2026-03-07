@@ -19,8 +19,58 @@ export function buildExecutionPlan(steps: WorkflowStep[]): ExecutionPlan {
   const tlciEstimate = classified.reduce((sum, s) => sum + s.estimatedCostUSD, 0);
   const allLLMEstimate = steps.length * 0.065;
   const savingsUSD = allLLMEstimate - tlciEstimate;
-  const planHash = createHash('sha256').update(steps.map(s => s.description.trim().toLowerCase()).join('||')).digest('hex').slice(0, 16);
-  return { planId: `plan_${Date.now()}`, planHash, steps: classified, tierBreakdown, costComparison: { tlciEstimate, allLLMEstimate, savingsUSD, savingsPct: Math.round((savingsUSD / allLLMEstimate) * 100) }, createdAt: Date.now(), approved: false };
+  const savingsPct = allLLMEstimate === 0 ? 0 : Math.round((savingsUSD / allLLMEstimate) * 100);
+
+  const planHash = createHash('sha256')
+    .update(steps.map(s => s.description.trim().toLowerCase()).join('||'))
+    .digest('hex')
+    .slice(0, 16);
+
+  const planId = `plan_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
+  return {
+    planId,
+    planHash,
+    steps: classified,
+    tierBreakdown,
+    costComparison: { tlciEstimate, allLLMEstimate, savingsUSD, savingsPct },
+    createdAt: Date.now(),
+    approved: false,
+  };
 }
-export function formatPlanForApproval(plan: ExecutionPlan): string { return `Plan: ${plan.planId}`; }
-export function formatPlanSummary(plan: ExecutionPlan): string { return `TLCI Plan: ${plan.planId}`; }
+
+const TIER_ICONS: Record<StepTier, string> = {
+  code: '⚙️ ',
+  slm: '🔵',
+  frontier: '🟣',
+};
+
+const TIER_LABELS: Record<StepTier, string> = {
+  code: 'CODE  ',
+  slm: 'SLM   ',
+  frontier: 'AI    ',
+};
+
+export function formatPlanForApproval(plan: ExecutionPlan): string {
+  const { steps, tierBreakdown, costComparison } = plan;
+  const lines: string[] = [
+    `┌─ Execution Plan ──────────────────────────────────────`,
+    `│  Est. cost:  $${costComparison.tlciEstimate.toFixed(4)}  (vs $${costComparison.allLLMEstimate.toFixed(2)} all-LLM → ${costComparison.savingsPct}% savings)`,
+    `│  Tiers:      ⚙️  ${tierBreakdown.code} code   🔵 ${tierBreakdown.slm} local   🟣 ${tierBreakdown.frontier} frontier`,
+    `├───────────────────────────────────────────────────────`,
+    ...steps.map((s, i) =>
+      `│  ${String(i + 1).padStart(2)}. ${TIER_ICONS[s.tier]} [${TIER_LABELS[s.tier]}] ${s.description}`
+    ),
+    `└───────────────────────────────────────────────────────`,
+    `  Proceed? (y/n/edit)`,
+  ];
+  return lines.join('\n');
+}
+
+export function formatPlanSummary(plan: ExecutionPlan): string {
+  const { tierBreakdown, costComparison } = plan;
+  return (
+    `TLCI Plan: ${tierBreakdown.code} code / ${tierBreakdown.slm} SLM / ${tierBreakdown.frontier} frontier` +
+    ` | Est. $${costComparison.tlciEstimate.toFixed(4)} (${costComparison.savingsPct}% cheaper than all-LLM)`
+  );
+}
