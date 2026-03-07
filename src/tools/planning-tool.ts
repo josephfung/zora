@@ -12,6 +12,7 @@
  */
 
 import { buildExecutionPlan, formatPlanSummary, formatPlanForApproval } from '../orchestrator/execution-planner.js';
+import type { DispatchResult } from '../orchestrator/tlci-dispatcher.js';
 import type { WorkflowStep } from '../orchestrator/step-classifier.js';
 import type { CustomToolDefinition } from '../orchestrator/execution-loop.js';
 import { createLogger } from '../utils/logger.js';
@@ -89,7 +90,7 @@ export interface PlanWorkflowResult {
 export type SubmitWorkflowFn = (
   steps: WorkflowStep[],
   opts?: { budgetLimitUSD?: number },
-) => Promise<unknown>;
+) => Promise<DispatchResult>;
 
 // ─── Handler ──────────────────────────────────────────────────────────────────
 
@@ -119,15 +120,18 @@ export async function handlePlanWorkflow(
     };
   }
 
-  // Execute via orchestrator's submitWorkflow
+  // Execute via orchestrator's submitWorkflow.
+  // The dispatcher uses the plan cache, so the same steps will reuse the preview plan's
+  // hash. Use the DispatchResult's planId/planHash as the authoritative IDs to avoid
+  // exposing a preview planId that differs from the executed plan's ID.
   const dispatchResult = await submitWorkflow(steps, { budgetLimitUSD });
 
   return {
-    planId: plan.planId,
-    planHash: plan.planHash,
+    planId: dispatchResult.planId,
+    planHash: dispatchResult.planHash,
     summary,
     approvalView,
-    tierBreakdown: plan.tierBreakdown,
+    tierBreakdown: dispatchResult.tierBreakdown,
     estimatedCostUSD: plan.costComparison.tlciEstimate,
     savingsPct: plan.costComparison.savingsPct,
     executed: true,
