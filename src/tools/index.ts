@@ -8,3 +8,4 @@
 export * from './notifications.js';
 export * from './memory-tools.js';
 export * from './tool-factory.js';
+export * from './planning-tool.js';
