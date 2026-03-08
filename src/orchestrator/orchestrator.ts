@@ -59,6 +59,8 @@ import { PolicyEngine } from '../security/policy-engine.js';
 import { IntentCapsuleManager } from '../security/intent-capsule.js';
 import { LeakDetector } from '../security/leak-detector.js';
 import { sanitizeInput } from '../security/prompt-defense.js';
+import { createCapabilityToken, enforceCapability } from '../security/capability-tokens.js';
+import type { WorkerCapabilityToken } from '../types.js';
 import { createLogger } from '../utils/logger.js';
 import { TLCIDispatcher, type DispatchResult, type DispatchCallOptions } from './tlci-dispatcher.js';
 import { PlanCache } from '../memory/plan-cache.js';
@@ -107,6 +109,9 @@ export class Orchestrator {
   // Security
   private _intentCapsuleManager!: IntentCapsuleManager;
   private _leakDetector!: LeakDetector;
+
+  // Per-job capability tokens (keyed by jobId) for worker isolation enforcement
+  private _activeTokens = new Map<string, WorkerCapabilityToken>();
 
   // Background systems
   private _heartbeatSystem: HeartbeatSystem | null = null;
@@ -391,6 +396,10 @@ export class Orchestrator {
   async submitTask(options: SubmitTaskOptions): Promise<string> {
     const jobId = options.jobId ?? `job_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
 
+    // SEC-10: Create a scoped capability token for this job
+    const capToken = createCapabilityToken(jobId, this._policy);
+    this._activeTokens.set(jobId, capToken);
+
     // Reset per-task state: ValidationPipeline rate limit is per-session, not per-orchestrator-lifetime.
     // Without this, after MAX_SAVES_PER_SESSION saves across all tasks, memory_save permanently blocks.
     this._validationPipeline.resetSession();
@@ -509,7 +518,7 @@ export class Orchestrator {
       maxTurns: options.maxTurns,
       errorBudget,
       customTools,
-      canUseTool: this._policyEngine.createCanUseTool(),
+      canUseTool: this._buildTokenAwareCanUseTool(jobId),
     };
 
     // ORCH-12: Run onTaskStart hooks (can modify context before routing)
@@ -520,11 +529,17 @@ export class Orchestrator {
     try {
       selectedProvider = await this._router.selectProvider(hookedContext);
     } catch (err) {
+      this._activeTokens.delete(jobId);
       throw new Error(`No provider available: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     // Execute with the selected provider (injectionDepth=0 for initial call)
-    return this._executeWithProvider(selectedProvider, hookedContext, options.onEvent, 0, 0, compressor);
+    // SEC-10: Clean up capability token after task completes (success or failure)
+    try {
+      return await this._executeWithProvider(selectedProvider, hookedContext, options.onEvent, 0, 0, compressor);
+    } finally {
+      this._activeTokens.delete(jobId);
+    }
   }
 
   /** Tracks errors that have already been through the failover path */
@@ -1134,9 +1149,14 @@ export class Orchestrator {
     this._validationPipeline?.resetSession();
 
     // Refresh canUseTool — the original closure may be stale after a restart
+    // SEC-10: Re-issue a capability token for the resumed job and apply token-aware enforcement
+    const resumeJobId = context.jobId;
+    const resumeCapToken = createCapabilityToken(resumeJobId, this._policy);
+    this._activeTokens.set(resumeJobId, resumeCapToken);
+
     const resumeContext: TaskContext = {
       ...context,
-      canUseTool: this._policyEngine.createCanUseTool(),
+      canUseTool: this._buildTokenAwareCanUseTool(resumeJobId),
     };
 
     // Route to provider using the preserved classification (no re-classification)
@@ -1144,10 +1164,16 @@ export class Orchestrator {
     try {
       selectedProvider = await this._router.selectProvider(resumeContext);
     } catch (err) {
+      this._activeTokens.delete(resumeJobId);
       throw new Error(`No provider available for resume: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    return this._executeWithProvider(selectedProvider, resumeContext, onEvent, 0, 0, compressor);
+    // SEC-10: Clean up capability token after resumed task completes (success or failure)
+    try {
+      return await this._executeWithProvider(selectedProvider, resumeContext, onEvent, 0, 0, compressor);
+    } finally {
+      this._activeTokens.delete(resumeJobId);
+    }
   }
 
   /**
@@ -1365,6 +1391,31 @@ export class Orchestrator {
     );
 
     return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools, planWorkflowTool];
+  }
+
+  /**
+   * SEC-10: Builds a token-aware canUseTool function that enforces capability
+   * token restrictions on path and command inputs before delegating to the
+   * policy engine. Call this once per job to get a closure bound to jobId.
+   */
+  private _buildTokenAwareCanUseTool(jobId: string): (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: Record<string, unknown> }> {
+    const policyCanUseTool = this._policyEngine.createCanUseTool();
+    return async (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => {
+      const token = this._activeTokens.get(jobId);
+      if (token) {
+        const pathArg = input['path'] as string | undefined;
+        if (pathArg) {
+          const capResult = enforceCapability(token, { type: 'path', target: pathArg });
+          if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Path denied by capability token' };
+        }
+        const cmdArg = input['command'] as string | undefined;
+        if (cmdArg) {
+          const capResult = enforceCapability(token, { type: 'command', target: cmdArg });
+          if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Command denied by capability token' };
+        }
+      }
+      return policyCanUseTool(tool, input, options);
+    };
   }
 
   /**
