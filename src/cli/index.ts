@@ -158,9 +158,12 @@ program
   .option('--max-cost-tier <tier>', 'Maximum cost tier: free, included, metered, premium')
   .option('--max-turns <n>', 'Maximum turns', parseInt)
   .action(async (prompt, opts) => {
-    // Allow running from inside a Claude Code session (or any env where CLAUDECODE is set).
-    // The claude-agent-sdk refuses to spawn when CLAUDECODE=1 (nested session guard).
+    // Allow running from inside a Claude Code session.
+    // The claude-agent-sdk checks several Claude Code env vars and either exits(1)
+    // or enters team mode (EXPERIMENTAL_AGENT_TEAMS) which causes a silent hang.
     delete process.env['CLAUDECODE'];
+    delete process.env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'];
+    delete process.env['CLAUDE_CODE_ENTRYPOINT'];
 
     const { config, policy } = await setupContext();
 
