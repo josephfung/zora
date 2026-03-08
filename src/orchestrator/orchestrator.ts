@@ -61,6 +61,8 @@ import { LeakDetector } from '../security/leak-detector.js';
 import { sanitizeInput } from '../security/prompt-defense.js';
 import { createCapabilityToken, enforceCapability } from '../security/capability-tokens.js';
 import type { WorkerCapabilityToken } from '../types.js';
+import { IntegrityGuardian } from '../security/integrity-guardian.js';
+import { SecretsManager } from '../security/secrets-manager.js';
 import { createLogger } from '../utils/logger.js';
 import { TLCIDispatcher, type DispatchResult, type DispatchCallOptions } from './tlci-dispatcher.js';
 import { PlanCache } from '../memory/plan-cache.js';
@@ -109,6 +111,8 @@ export class Orchestrator {
   // Security
   private _intentCapsuleManager!: IntentCapsuleManager;
   private _leakDetector!: LeakDetector;
+  private _integrityGuardian!: IntegrityGuardian;
+  private _secretsManager?: SecretsManager;
 
   // Per-job capability tokens (keyed by jobId) for worker isolation enforcement
   private _activeTokens = new Map<string, WorkerCapabilityToken>();
@@ -191,6 +195,46 @@ export class Orchestrator {
 
     // SEC-03: Wire LeakDetector for scanning tool outputs
     this._leakDetector = new LeakDetector();
+
+    // SEC-11: IntegrityGuardian — baseline + tamper detection for critical config files
+    this._integrityGuardian = new IntegrityGuardian(this._baseDir);
+    const baselinesPath = path.join(this._baseDir, 'state', 'integrity-baselines.json');
+    let baselinesExist = false;
+    try {
+      await fs.promises.access(baselinesPath);
+      baselinesExist = true;
+    } catch {
+      // first boot — baselines don't exist yet
+    }
+
+    if (!baselinesExist) {
+      await this._integrityGuardian.saveBaseline();
+      log.info('Integrity baselines established on first boot');
+    } else {
+      const integrityResult = await this._integrityGuardian.checkIntegrity();
+      if (!integrityResult.valid) {
+        for (const mismatch of integrityResult.mismatches) {
+          log.warn(
+            { file: mismatch.file, expected: mismatch.expected.slice(0, 8), actual: mismatch.actual.slice(0, 8) },
+            'Integrity mismatch — possible tampering detected',
+          );
+        }
+      } else {
+        log.info('Config integrity: clean');
+      }
+    }
+
+    // SEC-12: SecretsManager — AES-256-GCM encrypted secrets at rest
+    const masterPassword = process.env['ZORA_MASTER_PASSWORD'];
+    if (masterPassword) {
+      this._secretsManager = new SecretsManager(this._baseDir, masterPassword);
+      await this._secretsManager.init();
+      log.info('SecretsManager initialized');
+      // TODO: wire secret values into SecretRedactHook.addPattern() once that
+      // method is added to the hook's interface (SecretRedactHook has no addPattern yet)
+    } else {
+      log.warn('ZORA_MASTER_PASSWORD not set — encrypted secrets storage unavailable. Set this env var to enable.');
+    }
 
     this._sessionManager = new SessionManager(this._baseDir);
 
@@ -1496,6 +1540,24 @@ export class Orchestrator {
   /** ORCH-14: Get the current context transform function */
   get transformContext(): TransformContextFn {
     return this._transformContext;
+  }
+
+  /** SEC-11: Access the IntegrityGuardian for baseline and tamper checks */
+  get integrityGuardian(): IntegrityGuardian {
+    this._assertBooted();
+    return this._integrityGuardian;
+  }
+
+  /** SEC-11: Re-save integrity baselines after intentional config changes */
+  async rebaselineIntegrity(): Promise<void> {
+    this._assertBooted();
+    await this._integrityGuardian.saveBaseline();
+    log.info('Integrity baselines updated');
+  }
+
+  /** SEC-12: Access the SecretsManager (undefined if ZORA_MASTER_PASSWORD not set) */
+  get secretsManager(): SecretsManager | undefined {
+    return this._secretsManager;
   }
 
   get config(): ZoraConfig {

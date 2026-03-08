@@ -32,6 +32,7 @@ import { registerSteerCommands } from './steer-commands.js';
 import { registerSkillCommands } from './skill-commands.js';
 import { registerHookCommands } from './hook-commands.js';
 import { registerInitCommand } from './init-command.js';
+import { registerSecretCommands } from './secret-commands.js';
 import { runDoctorChecks } from './doctor.js';
 import { createLogger } from '../utils/logger.js';
 import { createRequire } from 'node:module';
@@ -440,6 +441,25 @@ program
       console.log('  (unable to resolve config — run `zora-agent init` first)');
     }
 
+    // SEC-11: Integrity check
+    console.log('');
+    console.log('Integrity:');
+    try {
+      const { IntegrityGuardian } = await import('../security/integrity-guardian.js');
+      const baseDir = path.join(os.homedir(), '.zora');
+      const guardian = new IntegrityGuardian(baseDir);
+      const integrity = await guardian.checkIntegrity();
+      if (integrity.valid) {
+        console.log('  Config integrity: clean');
+      } else {
+        for (const m of integrity.mismatches) {
+          console.warn(`  Integrity mismatch: ${m.file}`);
+        }
+      }
+    } catch (err) {
+      console.warn(`  Integrity check failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     if (!result.node.found) {
       console.log('\n⚠️  Node.js 20+ is required. Please upgrade.');
     }
@@ -460,5 +480,6 @@ registerSteerCommands(program, configDir);
 registerSkillCommands(program);
 registerHookCommands(program, configDir);
 registerInitCommand(program);
+registerSecretCommands(program);
 
 program.parse();
