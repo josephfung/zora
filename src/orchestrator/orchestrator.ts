@@ -518,25 +518,7 @@ export class Orchestrator {
       maxTurns: options.maxTurns,
       errorBudget,
       customTools,
-      canUseTool: (() => {
-        const policyCanUseTool = this._policyEngine.createCanUseTool();
-        return async (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => {
-          const token = this._activeTokens.get(jobId);
-          if (token) {
-            const pathArg = input['path'] as string | undefined;
-            if (pathArg) {
-              const capResult = enforceCapability(token, { type: 'path', target: pathArg });
-              if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Path denied by capability token' };
-            }
-            const cmdArg = input['command'] as string | undefined;
-            if (cmdArg) {
-              const capResult = enforceCapability(token, { type: 'command', target: cmdArg });
-              if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Command denied by capability token' };
-            }
-          }
-          return policyCanUseTool(tool, input, options);
-        };
-      })(),
+      canUseTool: this._buildTokenAwareCanUseTool(jobId),
     };
 
     // ORCH-12: Run onTaskStart hooks (can modify context before routing)
@@ -1174,25 +1156,7 @@ export class Orchestrator {
 
     const resumeContext: TaskContext = {
       ...context,
-      canUseTool: (() => {
-        const policyCanUseTool = this._policyEngine.createCanUseTool();
-        return async (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => {
-          const token = this._activeTokens.get(resumeJobId);
-          if (token) {
-            const pathArg = input['path'] as string | undefined;
-            if (pathArg) {
-              const capResult = enforceCapability(token, { type: 'path', target: pathArg });
-              if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Path denied by capability token' };
-            }
-            const cmdArg = input['command'] as string | undefined;
-            if (cmdArg) {
-              const capResult = enforceCapability(token, { type: 'command', target: cmdArg });
-              if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Command denied by capability token' };
-            }
-          }
-          return policyCanUseTool(tool, input, options);
-        };
-      })(),
+      canUseTool: this._buildTokenAwareCanUseTool(resumeJobId),
     };
 
     // Route to provider using the preserved classification (no re-classification)
@@ -1427,6 +1391,31 @@ export class Orchestrator {
     );
 
     return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools, planWorkflowTool];
+  }
+
+  /**
+   * SEC-10: Builds a token-aware canUseTool function that enforces capability
+   * token restrictions on path and command inputs before delegating to the
+   * policy engine. Call this once per job to get a closure bound to jobId.
+   */
+  private _buildTokenAwareCanUseTool(jobId: string): (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: Record<string, unknown> }> {
+    const policyCanUseTool = this._policyEngine.createCanUseTool();
+    return async (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => {
+      const token = this._activeTokens.get(jobId);
+      if (token) {
+        const pathArg = input['path'] as string | undefined;
+        if (pathArg) {
+          const capResult = enforceCapability(token, { type: 'path', target: pathArg });
+          if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Path denied by capability token' };
+        }
+        const cmdArg = input['command'] as string | undefined;
+        if (cmdArg) {
+          const capResult = enforceCapability(token, { type: 'command', target: cmdArg });
+          if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Command denied by capability token' };
+        }
+      }
+      return policyCanUseTool(tool, input, options);
+    };
   }
 
   /**
