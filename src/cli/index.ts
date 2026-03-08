@@ -214,6 +214,9 @@ program
       }
     } finally {
       await orchestrator.shutdown();
+      // Force exit: background timers (cron, compression flush) would otherwise
+      // keep the process alive indefinitely after the task completes.
+      process.exit(0);
     }
   });
 
