@@ -52,6 +52,7 @@ import { createSkillTools } from '../tools/skill-tool.js';
 import { ValidationPipeline } from '../memory/validation-pipeline.js';
 import { ContextCompressor } from '../memory/context-compressor.js';
 import { ObservationStore } from '../memory/observation-store.js';
+import { ReflectorWorker } from '../memory/reflector-worker.js';
 import { HeartbeatSystem } from '../routines/heartbeat.js';
 import { RoutineManager } from '../routines/routine-manager.js';
 import { NotificationTools } from '../tools/notifications.js';
@@ -141,6 +142,7 @@ export class Orchestrator {
 
   // Context compression
   private _observationStore!: ObservationStore;
+  private _reflectorWorker?: ReflectorWorker;
 
   // Background intervals
   private _authCheckTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -251,6 +253,13 @@ export class Orchestrator {
     );
     await this._observationStore.init();
 
+    // MEM-20: Initialize ReflectorWorker if compression is enabled
+    if (this._config.memory?.compression?.enabled) {
+      const compressFn = this._buildCompressFn();
+      this._reflectorWorker = new ReflectorWorker(compressFn, this._memoryManager);
+      log.info('ReflectorWorker initialized');
+    }
+
     // R2: Wire Router
     this._router = new Router({
       providers: this._providers,
@@ -357,7 +366,12 @@ export class Orchestrator {
     const scheduleConsolidation = () => {
       this._consolidationTimeout = setTimeout(async () => {
         try {
-          const count = await this._memoryManager.consolidateDailyNotes(7);
+          const reflectFn = this._reflectorWorker
+            ? async (content: string): Promise<void> => {
+                await this._reflectorWorker!.reflect(content, `consolidation_${Date.now()}`);
+              }
+            : undefined;
+          const count = await this._memoryManager.consolidateDailyNotes(7, reflectFn);
           if (count > 0) {
             log.info({ consolidated: count }, 'Daily notes consolidated');
           }
@@ -370,7 +384,12 @@ export class Orchestrator {
     // Run first check shortly after boot (30 seconds), then daily
     this._consolidationTimeout = setTimeout(async () => {
       try {
-        await this._memoryManager.consolidateDailyNotes(7);
+        const reflectFn = this._reflectorWorker
+          ? async (content: string): Promise<void> => {
+              await this._reflectorWorker!.reflect(content, `consolidation_${Date.now()}`);
+            }
+          : undefined;
+        await this._memoryManager.consolidateDailyNotes(7, reflectFn);
       } catch (err) {
         log.warn({ err }, 'Initial daily note consolidation failed');
       }
@@ -471,21 +490,17 @@ export class Orchestrator {
     // Create per-task context compressor if compression is enabled
     let compressor: ContextCompressor | null = null;
     if (this._config.memory?.compression?.enabled) {
-      const compressFn = async (prompt: string): Promise<string> => {
-        const compressLoop = new ExecutionLoop({
-          systemPrompt: 'You are a conversation observer. Compress messages into concise, dated observations. Respond with ONLY the observations.',
-          permissionMode: 'default',
-          cwd: process.cwd(),
-          maxTurns: 1,
-          model: this._config.memory.compression.model,
-        });
-        return compressLoop.run(prompt);
-      };
+      const compressFn = this._buildCompressFn();
       compressor = new ContextCompressor(
         this._config.memory.compression,
         this._observationStore,
         compressFn,
         jobId,
+        this._reflectorWorker
+          ? async (obs: string, sid: string): Promise<void> => {
+              await this._reflectorWorker!.reflectAndPersist(obs, sid, this._observationStore);
+            }
+          : undefined,
       );
       await compressor.loadExisting();
     }
@@ -1566,5 +1581,24 @@ export class Orchestrator {
 
   get providers(): LLMProvider[] {
     return this._providers;
+  }
+
+  // ── Private helpers ──────────────────────────────────────────────
+
+  /**
+   * MEM-20: Build the compressFn used by ContextCompressor and ReflectorWorker.
+   * Extracted so it can be reused in boot() (for ReflectorWorker) and submitTask().
+   */
+  private _buildCompressFn(): (prompt: string) => Promise<string> {
+    return async (prompt: string): Promise<string> => {
+      const compressLoop = new ExecutionLoop({
+        systemPrompt: 'You are a conversation observer. Compress messages into concise, dated observations. Respond with ONLY the observations.',
+        permissionMode: 'default',
+        cwd: process.cwd(),
+        maxTurns: 1,
+        model: this._config.memory?.compression?.model,
+      });
+      return compressLoop.run(prompt);
+    };
   }
 }
