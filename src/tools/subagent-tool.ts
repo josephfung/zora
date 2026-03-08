@@ -77,7 +77,15 @@ export function createSubagentTools(
       log.info({ subagent: name, taskLength: task.length }, 'Delegating to subagent');
 
       try {
-        const result = await submitTask({ prompt: task });
+        // NOTE: SubmitTaskOptions does not yet support systemPrompt override.
+        // As a workaround, we prepend the subagent's system prompt as context
+        // in the task prompt. Full systemPrompt threading is tracked as a
+        // follow-up (requires SubmitTaskOptions.systemPrompt field).
+        const augmentedPrompt = subagent.systemPrompt
+          ? `[Subagent context — follow these instructions throughout this task]\n${subagent.systemPrompt}\n\n[Task]\n${task}`
+          : task;
+
+        const result = await submitTask({ prompt: augmentedPrompt });
         return { result, subagent: name };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

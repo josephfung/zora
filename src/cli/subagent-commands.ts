@@ -63,7 +63,6 @@ export function registerSubagentCommands(program: Command): void {
           console.error('No subagents are currently defined.');
         }
         process.exit(1);
-        return;
       }
 
       console.log(`Name:         ${found.name}`);
