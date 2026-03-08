@@ -65,6 +65,9 @@ export class ContextCompressor {
   /** Session ID for this compressor instance */
   private readonly _sessionId: string;
 
+  /** MEM-20: Optional callback triggered when session-tier observations overflow */
+  private readonly _onSessionTierFull?: (observations: string, sessionId: string) => Promise<void>;
+
   /** Async buffer: pre-computed observations ready to activate */
   private _precomputedBlock: ObservationBlock | null = null;
   private _precomputePromise: Promise<void> | null = null;
@@ -77,11 +80,13 @@ export class ContextCompressor {
     store: ObservationStore,
     compressFn: CompressFn,
     sessionId?: string,
+    onSessionTierFull?: (observations: string, sessionId: string) => Promise<void>,
   ) {
     this._config = config;
     this._store = store;
     this._observer = new ObserverWorker(compressFn);
     this._sessionId = sessionId ?? `session_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    this._onSessionTierFull = onSessionTierFull;
     // Start pre-computing when working tier reaches 70% of threshold
     this._precomputeThreshold = Math.floor(config.working_tier_max_tokens * 0.7);
   }
@@ -291,9 +296,20 @@ export class ContextCompressor {
       if (this._sessionTokens > this._config.session_tier_max_tokens) {
         log.info(
           { sessionTokens: this._sessionTokens, max: this._config.session_tier_max_tokens },
-          'Session tier exceeds threshold — reflector pass needed',
+          'Session tier exceeds threshold — triggering reflector pass',
         );
-        // Reflector integration is handled by the orchestrator (OM-05/OM-07)
+        // MEM-20: Trigger reflector pass if callback is wired
+        if (this._onSessionTierFull) {
+          const blocks = await this._store.loadSession(this._sessionId);
+          const observationText = blocks.map(b => b.observations).join('\n\n');
+          if (observationText.trim()) {
+            try {
+              await this._onSessionTierFull(observationText, this._sessionId);
+            } catch (err) {
+              log.warn({ err }, 'Session-tier reflector pass failed');
+            }
+          }
+        }
       }
     } catch (err) {
       // On failure, put the chunk back at the front of working messages
