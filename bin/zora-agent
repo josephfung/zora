@@ -1,0 +1,10 @@
+#!/bin/sh
+# Strip Claude Code environment variables that cause the claude-agent-sdk to
+# enter CLI mode (CLAUDE_CODE_ENTRYPOINT=cli) or refuse to run (CLAUDECODE=1).
+# These must be unset before Node.js loads any SDK modules, so we exec a fresh
+# Node.js process with a clean environment rather than trying to delete them
+# inside the JavaScript handler (which runs after static imports fire).
+exec env -u CLAUDECODE \
+         -u CLAUDE_CODE_ENTRYPOINT \
+         -u CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS \
+         node "$(dirname "$0")/../dist/cli/index.js" "$@"
