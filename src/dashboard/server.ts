@@ -7,6 +7,7 @@
  */
 
 import express from 'express';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Server } from 'node:http';
@@ -54,6 +55,8 @@ export interface DashboardOptions {
   dashboardToken?: string;
   /** Optional TLCI cost tracker — enables /api/tlci-stats endpoint */
   costTracker?: CostTracker;
+  /** ZoraPolicy — enables /api/policy endpoint for the Security settings tab */
+  policy?: import('../types.js').ZoraPolicy;
 }
 
 export class DashboardServer {
@@ -64,10 +67,17 @@ export class DashboardServer {
   private readonly _sseClients: Map<ExpressResponse, VerbosityLevel> = new Map();
   /** TLCI cost tracker — undefined when not configured */
   private readonly _tlciCostTracker: CostTracker | undefined;
+  private readonly _authToken: string | undefined;
+  private readonly _authMiddleware: import('express').RequestHandler | null;
+  private readonly _indexHtmlPath: string;
+  /** Cached index.html content — read once at startup to avoid blocking the event loop on every GET /. */
+  private _indexHtmlCache: string | undefined;
 
   constructor(options: DashboardOptions) {
     this._options = options;
     this._tlciCostTracker = options.costTracker;
+    this._authToken = options.dashboardToken ?? process.env['ZORA_DASHBOARD_TOKEN'];
+    this._indexHtmlPath = path.join(__dirname, 'frontend', 'dist', 'index.html');
     this._app = express();
 
     // R22: Explicit body size limits
@@ -80,16 +90,44 @@ export class DashboardServer {
     // SEC-01: Mount Bearer token auth on API routes when a token is configured.
     // When no dashboardToken is set, auth is skipped entirely — this covers
     // the localhost-only use case where the dashboard is not exposed externally.
-    const token = options.dashboardToken ?? process.env['ZORA_DASHBOARD_TOKEN'];
-    if (token) {
-      this._app.use('/api', createAuthMiddleware({ staticToken: token }));
+    //
+    // The middleware instance is stored as a class field so it can also be
+    // applied to the index and SPA catch-all routes in _setupRoutes(), preventing
+    // token leakage via unauthenticated GET '/' requests that would otherwise
+    // receive window.__ZORA_TOKEN__ in the HTML response.
+    this._authMiddleware = this._authToken
+      ? createAuthMiddleware({ staticToken: this._authToken })
+      : null;
+
+    if (this._authMiddleware) {
+      // For SSE only: promote ?token= to Authorization header.
+      // EventSource cannot send custom headers; ?token= is the standard workaround.
+      // All other /api/* routes must use Authorization: Bearer — never a URL token —
+      // to avoid credentials appearing in server logs and referrer headers.
+      this._app.get('/api/events', (req, _res, next) => {
+        const raw = req.query['token'];
+        if (!req.headers.authorization && typeof raw === 'string' && raw.length <= 512) {
+          req.headers.authorization = `Bearer ${raw}`;
+        }
+        next();
+      });
+      this._app.use('/api', this._authMiddleware);
       log.info('Dashboard API authentication enabled');
     } else {
       log.warn('Dashboard API authentication disabled — no dashboardToken configured');
     }
 
-    // Serve static frontend files (Vite build output)
+    // Serve static frontend files (Vite build output).
+    // index.html gets window.__ZORA_TOKEN__ injected so the React app can authenticate
+    // axios calls and SSE without needing a separate token endpoint.
+    // Auth is applied here too so an unauthenticated request cannot read the
+    // injected token from the HTML response.
     const staticPath = path.join(__dirname, 'frontend', 'dist');
+    if (this._authMiddleware) {
+      this._app.get('/', this._authMiddleware, (_req, res) => this._serveIndex(res));
+    } else {
+      this._app.get('/', (_req, res) => this._serveIndex(res));
+    }
     this._app.use(express.static(staticPath));
 
     this._setupRoutes();
@@ -393,10 +431,52 @@ export class DashboardServer {
       }
     });
 
-    // Catch-all: serve index.html for SPA routing
-    this._app.get('*', (_req, res) => {
-      res.sendFile(path.join(__dirname, 'frontend', 'dist', 'index.html'));
+    // /api/policy — exposes real ZoraPolicy in the shape SecuritySettings.tsx expects
+    this._app.get('/api/policy', (_req, res) => {
+      const p = this._options.policy;
+      if (!p) {
+        res.status(503).json({ ok: false, error: 'Policy not available' });
+        return;
+      }
+      // Derive a human-readable preset from shell mode
+      const preset = p.shell.mode === 'deny_all' ? 'safe'
+        : p.shell.mode === 'allowlist' ? 'balanced'
+        : 'power';
+      // Return paths as-configured (~ unexpanded) to avoid leaking the
+      // server's home directory path to browser clients.
+      res.json({
+        ok: true,
+        policy: {
+          preset,
+          allowedPaths: p.filesystem.allowed_paths ?? [],
+          deniedPaths: p.filesystem.denied_paths ?? [],
+          allowedCommands: p.shell.allowed_commands ?? [],
+          blockedCommands: p.shell.denied_commands ?? [],
+        },
+      });
     });
+
+    // Catch-all: serve index.html for SPA routing (with token injection).
+    // Auth is applied so the token injected into the HTML is not readable by
+    // unauthenticated clients. API paths fall through to a 404 rather than
+    // being served the SPA shell, which would mask missing API routes.
+    if (this._authMiddleware) {
+      this._app.get('*', this._authMiddleware, (req, res) => {
+        if (req.path.startsWith('/api')) {
+          res.status(404).json({ error: 'Not found' });
+          return;
+        }
+        this._serveIndex(res);
+      });
+    } else {
+      this._app.get('*', (req, res) => {
+        if (req.path.startsWith('/api')) {
+          res.status(404).json({ error: 'Not found' });
+          return;
+        }
+        this._serveIndex(res);
+      });
+    }
   }
 
   /**
@@ -434,6 +514,37 @@ export class DashboardServer {
         // Client disconnected — remove and clean up
         this._sseClients.delete(client);
         try { client.end(); } catch { /* already closed */ }
+      }
+    }
+  }
+
+  /** Serve index.html with __ZORA_TOKEN__ injected when auth is enabled. */
+  private _serveIndex(res: import('express').Response): void {
+    try {
+      // Use cached HTML to avoid blocking the event loop on disk I/O per request.
+      // Token injection is deterministic at startup, so the cache is valid for the
+      // lifetime of the process.
+      if (!this._indexHtmlCache) {
+        this._indexHtmlCache = readFileSync(this._indexHtmlPath, 'utf-8');
+      }
+      let html = this._indexHtmlCache;
+      if (this._authToken) {
+        const script = `<script>window.__ZORA_TOKEN__=${JSON.stringify(this._authToken)};</script>`;
+        // Case-insensitive replace so minified/transformed HTML still works
+        const patched = html.replace(/<\/head>/i, `${script}</head>`);
+        if (patched === html) {
+          // </head> not found — prepend script to body as fallback
+          html = html.replace(/<body/i, `${script}<body`) || html;
+        } else {
+          html = patched;
+        }
+      }
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(html);
+    } catch (err) {
+      log.error({ err }, 'Failed to serve index.html');
+      if (!res.headersSent) {
+        res.status(500).send('Internal server error');
       }
     }
   }

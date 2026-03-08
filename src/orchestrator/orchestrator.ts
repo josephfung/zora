@@ -406,6 +406,10 @@ export class Orchestrator {
     ]));
     this._toolHookRunner.register(SecretRedactHook);
 
+    // Eagerly initialize TLCI so CostTracker is available immediately after boot()
+    // (daemon.ts reads getTLCICostTracker() synchronously when constructing DashboardServer)
+    await this._ensureTLCI();
+
     this._booted = true;
   }
 
@@ -1132,7 +1136,9 @@ export class Orchestrator {
       this._planCache,
       { autonomyLevel: 'full' },
 
-      // Tier 1: real code tools — no LLM call, no token cost
+      // Tier 1: real code tools — no LLM call, no token cost.
+      // Pass a policy validator derived from ZoraPolicy so fileOp respects the same
+      // allowed_paths/denied_paths as the main execution surface.
       async (step) => {
         const classifiedStep = step as WorkflowStep & { suggestedCodeTool?: string };
         const result = await runCodeToolStep({
@@ -1140,6 +1146,22 @@ export class Orchestrator {
           suggestedCodeTool: classifiedStep.suggestedCodeTool,
           context: step.context,
           description: step.description,
+          policyValidator: (normalizedPath) => {
+            const fsPol = this._policy.filesystem;
+            // Segment-aware containment: expand ~ and require path.sep boundary
+            // so /etc doesn't match /etc-foo and ~/.ssh doesn't miss due to unexpanded ~
+            const inside = (root: string) => {
+              const expanded = path.resolve(root.replace(/^~/, os.homedir()));
+              return normalizedPath === expanded || normalizedPath.startsWith(expanded + path.sep);
+            };
+            if (fsPol.denied_paths?.some(inside)) {
+              return { allowed: false, reason: 'path in denied_paths' };
+            }
+            if (fsPol.allowed_paths?.length && !fsPol.allowed_paths.some(inside)) {
+              return { allowed: false, reason: 'path not in allowed_paths' };
+            }
+            return { allowed: true };
+          },
         });
         if (!result.success) {
           log.warn({ stepId: step.id, tool: result.tool, error: result.error }, 'code-tool step failed');
