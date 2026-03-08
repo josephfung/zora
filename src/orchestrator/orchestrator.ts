@@ -1463,9 +1463,9 @@ export class Orchestrator {
    * token restrictions on path and command inputs before delegating to the
    * policy engine. Call this once per job to get a closure bound to jobId.
    */
-  private _buildTokenAwareCanUseTool(jobId: string): (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: Record<string, unknown> }> {
+  private _buildTokenAwareCanUseTool(jobId: string): (tool: string, input: Record<string, unknown>, options: { signal: AbortSignal }) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: Record<string, unknown> }> {
     const policyCanUseTool = this._policyEngine.createCanUseTool();
-    return async (tool: string, input: Record<string, unknown>, options: { signal: unknown }) => {
+    return async (tool: string, input: Record<string, unknown>, options: { signal: AbortSignal }) => {
       const token = this._activeTokens.get(jobId);
       if (token) {
         const pathArg = input['path'] as string | undefined;
