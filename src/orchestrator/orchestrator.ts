@@ -49,6 +49,7 @@ import { MemoryManager } from '../memory/memory-manager.js';
 import { ExtractionPipeline } from '../memory/extraction-pipeline.js';
 import { createMemoryTools } from '../tools/memory-tools.js';
 import { createSkillTools } from '../tools/skill-tool.js';
+import { createSubagentTools } from '../tools/subagent-tool.js';
 import { ValidationPipeline } from '../memory/validation-pipeline.js';
 import { ContextCompressor } from '../memory/context-compressor.js';
 import { ObservationStore } from '../memory/observation-store.js';
@@ -1434,7 +1435,12 @@ export class Orchestrator {
       (steps, opts) => this.submitWorkflow(steps, opts),
     );
 
-    return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools, planWorkflowTool];
+    // Subagent tools: list_subagents and delegate_to_subagent
+    const subagentTools = createSubagentTools(
+      (opts) => this.submitTask({ prompt: opts.prompt }),
+    );
+
+    return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools, planWorkflowTool, ...subagentTools];
   }
 
   /**
