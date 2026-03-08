@@ -1596,7 +1596,7 @@ export class Orchestrator {
         permissionMode: 'default',
         cwd: process.cwd(),
         maxTurns: 1,
-        model: this._config.memory.compression.model,
+        model: this._config.memory?.compression?.model,
       });
       return compressLoop.run(prompt);
     };
