@@ -144,7 +144,9 @@ export class HeartbeatSystem {
    */
   stop(): void {
     if (this._scheduledTask) {
-      this._scheduledTask.stop();
+      // destroy() releases the underlying timer handle so the process can exit.
+      // stop() only pauses the task but keeps the timer alive, preventing exit.
+      this._scheduledTask.destroy();
       this._scheduledTask = null;
     }
   }

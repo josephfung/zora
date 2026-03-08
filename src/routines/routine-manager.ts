@@ -169,7 +169,9 @@ export class RoutineManager {
    */
   stopAll(): void {
     for (const task of this._scheduledTasks.values()) {
-      task.stop();
+      // destroy() releases the underlying timer handle so the process can exit.
+      // stop() only pauses but keeps the timer alive, preventing process exit.
+      task.destroy();
     }
     this._scheduledTasks.clear();
   }
