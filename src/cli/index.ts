@@ -158,6 +158,10 @@ program
   .option('--max-cost-tier <tier>', 'Maximum cost tier: free, included, metered, premium')
   .option('--max-turns <n>', 'Maximum turns', parseInt)
   .action(async (prompt, opts) => {
+    // Allow running from inside a Claude Code session (or any env where CLAUDECODE is set).
+    // The claude-agent-sdk refuses to spawn when CLAUDECODE=1 (nested session guard).
+    delete process.env['CLAUDECODE'];
+
     const { config, policy } = await setupContext();
 
     const providers = createProviders(config);
