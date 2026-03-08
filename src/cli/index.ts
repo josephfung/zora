@@ -159,11 +159,12 @@ program
   .option('--max-turns <n>', 'Maximum turns', parseInt)
   .action(async (prompt, opts) => {
     // Allow running from inside a Claude Code session.
-    // The claude-agent-sdk checks several Claude Code env vars and either exits(1)
-    // or enters team mode (EXPERIMENTAL_AGENT_TEAMS) which causes a silent hang.
+    // The claude-agent-sdk checks CLAUDECODE (exits with error) and
+    // CLAUDE_CODE_ENTRYPOINT=cli (triggers CLI mode that hangs the async generator).
+    // Delete both before any SDK interaction.
     delete process.env['CLAUDECODE'];
-    delete process.env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'];
     delete process.env['CLAUDE_CODE_ENTRYPOINT'];
+    delete process.env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'];
 
     const { config, policy } = await setupContext();
 

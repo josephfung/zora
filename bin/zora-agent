@@ -1,10 +1,23 @@
 #!/bin/sh
 # Strip Claude Code environment variables that cause the claude-agent-sdk to
 # enter CLI mode (CLAUDE_CODE_ENTRYPOINT=cli) or refuse to run (CLAUDECODE=1).
-# These must be unset before Node.js loads any SDK modules, so we exec a fresh
-# Node.js process with a clean environment rather than trying to delete them
-# inside the JavaScript handler (which runs after static imports fire).
+# These must be unset before Node.js loads any SDK modules.
+#
+# Resolve the real location of this script so the path works whether called
+# directly or through an npm-installed symlink.
+SCRIPT="$0"
+while [ -L "$SCRIPT" ]; do
+  DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+  SCRIPT="$(readlink "$SCRIPT")"
+  case "$SCRIPT" in
+    /*) ;;
+    *) SCRIPT="$DIR/$SCRIPT" ;;
+  esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"
+ENTRY="$SCRIPT_DIR/../dist/cli/index.js"
+
 exec env -u CLAUDECODE \
          -u CLAUDE_CODE_ENTRYPOINT \
          -u CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS \
-         node "$(dirname "$0")/../dist/cli/index.js" "$@"
+         node "$ENTRY" "$@"
