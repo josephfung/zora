@@ -1156,12 +1156,23 @@ export class Orchestrator {
             // so /etc doesn't match /etc-foo and ~/.ssh doesn't miss due to unexpanded ~
             const inside = (root: string) => {
               const expanded = path.resolve(root.replace(/^~/, os.homedir()));
-              return normalizedPath === expanded || normalizedPath.startsWith(expanded + path.sep);
+              // Also resolve symlinks so a symlink into a denied dir is caught
+              let realExpanded = expanded;
+              try { realExpanded = fs.realpathSync(expanded); } catch { /* path may not exist */ }
+              let realNorm = normalizedPath;
+              try { realNorm = fs.realpathSync(normalizedPath); } catch { /* path may not exist */ }
+              return (
+                (normalizedPath === expanded || normalizedPath.startsWith(expanded + path.sep)) ||
+                (realNorm === realExpanded || realNorm.startsWith(realExpanded + path.sep))
+              );
             };
             if (fsPol.denied_paths?.some(inside)) {
               return { allowed: false, reason: 'path in denied_paths' };
             }
-            if (fsPol.allowed_paths?.length && !fsPol.allowed_paths.some(inside)) {
+            // When allowed_paths is explicitly set (even as an empty array), require
+            // the path to be inside one of the allowed roots. This matches PolicyEngine
+            // semantics where an empty allowlist means no filesystem access is permitted.
+            if (fsPol.allowed_paths != null && !fsPol.allowed_paths.some(inside)) {
               return { allowed: false, reason: 'path not in allowed_paths' };
             }
             return { allowed: true };

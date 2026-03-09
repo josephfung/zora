@@ -80,7 +80,7 @@ function probeStartup(
       resolved = true;
       child.kill('SIGTERM');
       resolve({
-        started: stdoutChunks.length > 0 || stderrChunks.length > 0,
+        started: stdoutChunks.length > 0,
         stdout: stdoutChunks.join(''),
         stderr: stderrChunks.join(''),
       });

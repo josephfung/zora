@@ -23,6 +23,7 @@
 
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs';
 import type { ToolHook, ToolCallContext, ToolHookResult } from '../tool-hook-runner.js';
 import { createLogger } from '../../utils/logger.js';
 
@@ -78,14 +79,21 @@ const SHELL_READ_COMMANDS = /\b(cat|head|tail|less|more|strings|xxd|hexdump|base
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Normalize a path: expand ~, resolve relative segments. */
+/** Normalize a path: expand ~, resolve relative segments, and follow symlinks. */
 function normalizePath(raw: string): string {
   if (!raw) return '';
   const expanded = raw.startsWith('~')
     ? path.join(os.homedir(), raw.slice(1))
     : raw;
-  // Resolve '..' sequences without requiring the file to exist
-  return path.normalize(expanded);
+  // Resolve '..' sequences first (path.normalize doesn't require the file to exist)
+  const normalized = path.normalize(expanded);
+  // Then attempt to resolve symlinks so a symlink into a sensitive dir is caught.
+  // realpathSync throws if the path doesn't exist — fall back to the normalized form.
+  try {
+    return fs.realpathSync(normalized);
+  } catch {
+    return normalized;
+  }
 }
 
 /** @deprecated use extractFileTokensFromCommand */
@@ -107,10 +115,13 @@ function matchesSensitivePath(normalizedPath: string): string | null {
 
 /** Extract all file-like tokens from a shell command (by extension or flag). */
 function extractFileTokensFromCommand(cmd: string): string[] {
-  // Match path-like tokens (~/…, /…, ../…) AND bare filenames with suspicious extensions
+  // Strip surrounding quotes from a token (handles both single and double quotes)
+  const unquote = (s: string) => s.replace(/^['"]|['"]$/g, '');
+
+  // Match path-like tokens: unquoted (~/…, /…, ../…) and quoted variants
   const pathTokens = cmd.match(
-    /(?:~\/[^\s;|&>'"`]+|\/[^\s;|&>'"`]+|\.\.?\/[^\s;|&>'"`]+)/g,
-  ) ?? [];
+    /(?:['"](?:~\/|\/|\.\.?\/)(?:[^'"]+)['"]|~\/[^\s;|&>'"` ]+|\/[^\s;|&>'"` ]+|\.\.?\/[^\s;|&>'"` ]+)/g,
+  )?.map(unquote) ?? [];
 
   // Also grab tokens after -in, -keyfile, -cert, -key flags (common in openssl, ssh commands)
   const flagValueTokens = [...cmd.matchAll(/(?:-in|-keyfile|-cert|-key|-f)\s+([^\s;|&>'"`]+)/gi)]

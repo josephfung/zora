@@ -177,6 +177,7 @@ program
     const orchestrator = new Orchestrator({ config, policy, providers });
     await orchestrator.boot();
 
+    let exitCode = 0;
     try {
       let spinnerActive = true;
       let streamedText = false;
@@ -220,11 +221,14 @@ program
       if (result && !streamedText) {
         console.log('\n' + result);
       }
+    } catch (err) {
+      log.error({ err }, 'Task failed');
+      exitCode = 1;
     } finally {
       await orchestrator.shutdown();
       // Force exit: background timers (cron, compression flush) would otherwise
       // keep the process alive indefinitely after the task completes.
-      process.exit(0);
+      process.exit(exitCode);
     }
   });
 

@@ -389,10 +389,12 @@ describe.skipIf(SKIP)('Memory: observation and daily memory written after task',
     const obs = latestObservationAfter(t0);
     expect(obs, 'No observation file written after task').not.toBeNull();
 
-    const data = JSON.parse(fs.readFileSync(obs!, 'utf8'));
-    expect(data.sessionId).toMatch(/^job_/);
-    expect(data.observations).toBeTruthy();
-    expect(data.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}/);
+    // Observation files are JSONL (one JSON object per line) — parse the last line
+    const lines = fs.readFileSync(obs!, 'utf8').split('\n').filter(l => l.trim());
+    const data = JSON.parse(lines[lines.length - 1]!) as Record<string, unknown>;
+    expect(data['sessionId']).toMatch(/^job_/);
+    expect(data['observations']).toBeTruthy();
+    expect(data['createdAt']).toMatch(/^\d{4}-\d{2}-\d{2}/);
   }, TIMEOUT_MS + 5_000);
 
   it('updates the daily memory file for today', () => {
