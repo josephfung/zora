@@ -38,6 +38,7 @@ import { ShellSafetyHook } from '../hooks/built-in/shell-safety.js';
 import { AuditLogHook } from '../hooks/built-in/audit-log.js';
 import { RateLimitHook } from '../hooks/built-in/rate-limit.js';
 import { SecretRedactHook } from '../hooks/built-in/secret-redact.js';
+import { SensitiveFileGuardHook } from '../hooks/built-in/sensitive-file-guard.js';
 import { Router } from './router.js';
 import { FailoverController } from './failover-controller.js';
 import { RetryQueue } from './retry-queue.js';
@@ -397,7 +398,10 @@ export class Orchestrator {
       scheduleConsolidation();
     }, 30 * 1000);
 
-    // Register default tool-level hooks
+    // Register default tool-level hooks.
+    // SensitiveFileGuardHook is registered FIRST — it is a hard-coded,
+    // non-bypassable layer that cannot be disabled via policy.toml.
+    this._toolHookRunner.register(SensitiveFileGuardHook);
     this._toolHookRunner.register(ShellSafetyHook);
     this._toolHookRunner.register(new AuditLogHook());
     this._toolHookRunner.register(new RateLimitHook([
