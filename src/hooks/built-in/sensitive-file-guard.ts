@@ -124,8 +124,9 @@ function extractFileTokensFromCommand(cmd: string): string[] {
   )?.map(unquote) ?? [];
 
   // Also grab tokens after -in, -keyfile, -cert, -key flags (common in openssl, ssh commands)
-  const flagValueTokens = [...cmd.matchAll(/(?:-in|-keyfile|-cert|-key|-f)\s+([^\s;|&>'"`]+)/gi)]
-    .map(m => m[1] ?? '');
+  // Strip surrounding quotes from flag values (handles -in "~/.ssh/key.pem" and -in '~/.env')
+  const flagValueTokens = [...cmd.matchAll(/(?:-in|-keyfile|-cert|-key|-f)\s+(['"]?)([^\s;|&>]+)\1/gi)]
+    .map(m => m[2] ?? '');
 
   // Bare filenames (no directory component) adjacent to read commands — check by extension
   const bareTokens = cmd.match(/\b[\w.-]+\.(pem|p12|pfx|kdbx|1pif|env)\b/gi) ?? [];

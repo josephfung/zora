@@ -72,25 +72,6 @@ function ask(
   };
 }
 
-/**
- * Extract actual LLM text from stdout, stripping pino JSON log lines,
- * ANSI control codes, and spinner frames.
- */
-function extractLLMText(stdout: string): string {
-  return stdout
-    .split('\n')
-    .filter(l => {
-      const trimmed = l.trim();
-      if (!trimmed) return false;
-      // Skip pino JSON log lines
-      if (trimmed.startsWith('{"level":')) return false;
-      // Skip lines that are only ANSI escape sequences / control chars
-      if (/^[\x1b\x0d\x08\x1a[\]?►◒◐◓◑◇│]+/.test(trimmed)) return false;
-      return true;
-    })
-    .join('\n')
-    .trim();
-}
 
 /**
  * Start `zora-agent ask` and wait until a session file appears with a
