@@ -23,6 +23,7 @@
     "dev": "tsx src/index.ts",
     "test": "npm run test:unit && npm run test:browser",
     "test:unit": "vitest run",
+    "test:integration": "ZORA_INTEGRATION=1 vitest run tests/integration/cli-ask.test.ts",
     "test:browser": "playwright test",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
