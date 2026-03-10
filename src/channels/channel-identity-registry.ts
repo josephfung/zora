@@ -9,7 +9,7 @@
  * INVARIANT-3: Unknown senders receive NO response
  */
 
-import { readFileSync, watchFile, unwatchFile } from "fs";
+import { readFileSync } from "fs";
 import { resolve } from "path";
 
 // Using smol-toml or @iarna/toml if available, fallback to manual parse
@@ -34,7 +34,7 @@ async function loadTomlParser(): Promise<(content: string) => Record<string, unk
  * Basic TOML parser for channel-policy.toml structure.
  * Only handles the exact keys we need — not a general TOML parser.
  */
-function parseChannelPolicyToml(content: string): Record<string, unknown> {
+function parseChannelPolicyToml(_content: string): Record<string, unknown> {
   // We'll use a JSON-compatible approach: convert TOML to a JS object manually
   // This is a limited fallback — recommend installing smol-toml
   throw new Error(

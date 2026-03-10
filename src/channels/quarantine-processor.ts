@@ -11,7 +11,7 @@
  * Reference: CaMeL paper (arxiv.org/abs/2503.18813)
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ChannelMessage, CapabilitySet, StructuredIntent } from "../types/channel.js";
 
 /** Output from the quarantine LLM */
@@ -22,7 +22,7 @@ interface QuarantineOutput {
   suspicious_reason?: string;
 }
 
-/** Injection patterns that always set suspicious=true */
+/** Injection patterns that always set suspicious=true (pre-screen before LLM call) */
 const INJECTION_PATTERNS = [
   /ignore\s+(all\s+)?previous\s+instructions/i,
   /you\s+are\s+now\s+(a\s+)?/i,
@@ -48,11 +48,9 @@ MEMORY ACCESS: none
 You CANNOT call any tools. You CANNOT access any files. You CANNOT make any network requests.`;
 
 export class QuarantineProcessor {
-  private client: Anthropic;
   private model: string;
 
   constructor(model = "claude-haiku-4-5-20251001") {
-    this.client = new Anthropic();
     this.model = model;
   }
 
@@ -78,41 +76,20 @@ export class QuarantineProcessor {
         goal: "[Blocked: message matched known injection pattern]",
         params: {},
         taintLevel: "channel_sourced",
-        // @ts-expect-error — extending interface with runtime flag for caller
         suspicious: true,
-        // @ts-expect-error
         suspicious_reason: "Pre-screen: matched injection keyword pattern",
       };
     }
 
     try {
-      const response = await this.client.messages.create({
-        model: this.model,
-        max_tokens: 512,
-        system: QUARANTINE_SYSTEM_PROMPT,
-        messages: [
-          {
-            role: "user",
-            content: `Extract the intent from this message:\n\n${message.content}`,
-          },
-        ],
-        // No tools registered — enforces INVARIANT-4
-      });
-
-      const rawText = response.content
-        .filter(block => block.type === "text")
-        .map(block => (block as { type: "text"; text: string }).text)
-        .join("");
-
+      const rawText = await this._runQuarantineLLM(message.content);
       const parsed = this.parseQuarantineOutput(rawText);
 
       return {
         goal: parsed.goal,
         params: parsed.params,
         taintLevel: "channel_sourced",
-        // @ts-expect-error — runtime-only field used by caller for suspicious check
         suspicious: parsed.suspicious,
-        // @ts-expect-error
         suspicious_reason: parsed.suspicious_reason,
       };
     } catch (err) {
@@ -121,12 +98,56 @@ export class QuarantineProcessor {
         goal: "[Quarantine LLM error — task rejected]",
         params: {},
         taintLevel: "channel_sourced",
-        // @ts-expect-error
         suspicious: true,
-        // @ts-expect-error
         suspicious_reason: `Quarantine LLM error: ${(err as Error).message}`,
       };
     }
+  }
+
+  /**
+   * Runs the quarantine LLM with the message content.
+   * Uses claude-agent-sdk with allowedTools: [] to enforce no-tool execution.
+   * Returns the raw text output from the LLM.
+   */
+  private async _runQuarantineLLM(messageContent: string): Promise<string> {
+    const prompt = `Extract the intent from this message:\n\n${messageContent}`;
+
+    const sdkQuery = query({
+      prompt,
+      options: {
+        model: this.model,
+        systemPrompt: QUARANTINE_SYSTEM_PROMPT,
+        // No tools registered — enforces INVARIANT-4
+        allowedTools: [] as string[],
+        maxTurns: 1,
+      },
+    });
+
+    let resultText = "";
+
+    for await (const message of sdkQuery) {
+      if (message.type === "result") {
+        const resultMsg = message as { type: "result"; is_error?: boolean; result?: string; errors?: string[] };
+        if (resultMsg.is_error) {
+          const errMsg = resultMsg.errors?.join("; ") ?? "Quarantine LLM returned an error";
+          throw new Error(errMsg);
+        }
+        resultText = resultMsg.result ?? "";
+      } else if (message.type === "assistant") {
+        // Collect text blocks from assistant messages as fallback
+        const assistantMsg = message as {
+          type: "assistant";
+          message: { content: Array<{ type: string; text?: string }> };
+        };
+        for (const block of assistantMsg.message.content) {
+          if (block.type === "text" && block.text) {
+            resultText += block.text;
+          }
+        }
+      }
+    }
+
+    return resultText;
   }
 
   /**
@@ -164,10 +185,9 @@ export class QuarantineProcessor {
 
 /**
  * Type guard for checking if a StructuredIntent was flagged as suspicious
- * by the quarantine processor (runtime-only field).
+ * by the quarantine processor.
  */
 export function isSuspicious(intent: StructuredIntent): boolean {
-  // @ts-expect-error — runtime field added by QuarantineProcessor
   return Boolean(intent.suspicious);
 }
 
@@ -175,6 +195,5 @@ export function isSuspicious(intent: StructuredIntent): boolean {
  * Get the suspicious reason from a flagged intent.
  */
 export function getSuspiciousReason(intent: StructuredIntent): string | undefined {
-  // @ts-expect-error — runtime field added by QuarantineProcessor
-  return intent.suspicious_reason as string | undefined;
+  return intent.suspicious_reason;
 }

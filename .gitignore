@@ -85,3 +85,4 @@ HANDOFF-*.md
 docs/interview-prep-*.md
 specs/
 zora-linkedin-*.md
+config/channel-policy.toml

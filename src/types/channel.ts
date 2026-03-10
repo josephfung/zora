@@ -52,6 +52,10 @@ export interface StructuredIntent {
   goal: string;              // Extracted by QuarantineProcessor
   params: Record<string, unknown>;
   taintLevel: "trusted" | "channel_sourced";  // CaMeL provenance tag
+  /** Set by QuarantineProcessor when injection patterns are detected */
+  suspicious?: boolean;
+  /** Human-readable reason why the intent was flagged */
+  suspicious_reason?: string;
 }
 
 /** Denied capability set — used when sender is not in policy or role is null */
