@@ -2,6 +2,8 @@
 
 # Zora
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ryaker/zora)
+
 **Your personal AI agent. Local, secure, and memory-first.**
 
 Zora runs on your computer, takes real actions (reads files, runs commands, automates tasks), and actually remembers what it's doing between sessions — without giving up control of your system.
