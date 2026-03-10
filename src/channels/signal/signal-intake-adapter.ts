@@ -25,6 +25,7 @@ const RETRY_MAX_MS = 32000;   // Cap at 32 seconds
 
 export class SignalIntakeAdapter {
   private readonly _phoneNumber: string;
+  private readonly _cliPath: string | undefined;
   private _cli: SignalCli | null = null;
   private _messageHandler: ((msg: ChannelMessage) => Promise<void>) | null = null;
   private _seenIds = new Set<string>();
@@ -32,8 +33,9 @@ export class SignalIntakeAdapter {
   private _stopped = false;
   private _retryTimeout: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(phoneNumber: string) {
+  constructor(phoneNumber: string, cliPath?: string) {
     this._phoneNumber = phoneNumber;
+    this._cliPath = cliPath;
   }
 
   /**
@@ -64,6 +66,11 @@ export class SignalIntakeAdapter {
     log.info('[signal] Daemon stopped');
   }
 
+  /** Returns the connected SignalCli instance (for sharing with ResponseGateway). */
+  getCli(): SignalCli | null {
+    return this._cli;
+  }
+
   /**
    * Register the message handler.
    * Called before start(). Only one handler is supported.
@@ -77,7 +84,12 @@ export class SignalIntakeAdapter {
     while (!this._stopped && this._retryCount <= MAX_RETRIES) {
       try {
         log.info('[signal] Connecting to signal-cli daemon...');
-        this._cli = new SignalCli(this._phoneNumber);
+        // If a cliPath is configured, pass it as first arg so signal-sdk uses that
+        // binary instead of its bundled version. Required when the account was
+        // registered with a newer signal-cli than the one bundled in signal-sdk.
+        this._cli = this._cliPath
+          ? new SignalCli(this._cliPath, this._phoneNumber)
+          : new SignalCli(this._phoneNumber);
 
         this._cli.on('message', (raw: unknown) => {
           this._handleRawMessage(raw).catch(err => {

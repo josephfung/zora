@@ -79,7 +79,6 @@ import { ChannelPolicyGate } from '../channels/channel-policy-gate.js';
 import { CapabilityResolver } from '../channels/capability-resolver.js';
 import { SignalIntakeAdapter } from '../channels/signal/signal-intake-adapter.js';
 import { SignalResponseGateway } from '../channels/signal/signal-response-gateway.js';
-import { SignalCli } from 'signal-sdk';
 
 const log = createLogger('orchestrator');
 
@@ -478,16 +477,21 @@ export class Orchestrator {
         return;
       }
 
-      // Wire SignalResponseGateway — shares the same SignalCli daemon as intake
-      const cli = new SignalCli(phoneNumber);
-      this._signalGateway = new SignalResponseGateway(cli);
-
-      this._signalIntake = new SignalIntakeAdapter(phoneNumber);
+      const rawCliPath = signalConfig?.signal_cli_path;
+      const cliPath = rawCliPath
+        ? rawCliPath.replace(/^~/, process.env['HOME'] ?? '')
+        : undefined;
+      this._signalIntake = new SignalIntakeAdapter(phoneNumber, cliPath);
       this._signalIntake.onMessage(async (msg: ChannelMessage) => {
         await this._handleChannelMessage(msg);
       });
 
       await this._signalIntake.start();
+
+      // Share the connected SignalCli from intake — avoids a second disconnected instance
+      const connectedCli = this._signalIntake.getCli();
+      if (!connectedCli) throw new Error('SignalIntakeAdapter connected but getCli() returned null');
+      this._signalGateway = new SignalResponseGateway(connectedCli);
       log.info({ phoneNumber }, '[signal] Channel online');
     } catch (err) {
       log.error({ err }, '[signal] Channel failed to start — continuing without it');

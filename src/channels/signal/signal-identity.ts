@@ -48,19 +48,35 @@ export function normalizeToE164(raw: string): string {
  */
 export function envelopeToChannelIdentity(envelope: {
   sourceNumber?: string;
+  source?: string;       // signal-sdk normalizes: source || sourceNumber
   sourceUuid?: string;
   sourceName?: string;
 }): ChannelIdentity {
-  if (!envelope.sourceNumber) {
-    throw new Error("Envelope missing sourceNumber — cannot identify sender");
+  // Modern Signal (sealed-sender) delivers sourceNumber as null; identity is UUID-only.
+  // source field contains the UUID string when sourceNumber is absent.
+  const uuid = envelope.sourceUuid;
+
+  // Prefer explicit phone number; fall back to UUID-as-identifier for sealed-sender.
+  // The E.164 field is only set when Signal provides a real phone number.
+  const hasPhone = envelope.sourceNumber && envelope.sourceNumber !== 'null';
+  const rawPhone = hasPhone ? envelope.sourceNumber : undefined;
+
+  if (!rawPhone && !uuid) {
+    throw new Error("Envelope missing sourceNumber and sourceUuid — cannot identify sender");
   }
+
+  // phoneNumber field: real E.164 if available, else "uuid:<uuid>" for policy lookup.
+  // Policy entries must use "uuid:<uuid>" format when phone is not shared.
+  const phoneNumber = rawPhone
+    ? normalizeToE164(rawPhone)
+    : `uuid:${uuid}`;
 
   return {
     type: "signal",
-    phoneNumber: normalizeToE164(envelope.sourceNumber),
+    phoneNumber,
     signalUuid: envelope.sourceUuid ?? undefined,
     displayName: envelope.sourceName ?? undefined,
-    isLinkedDevice: false,  // Incoming messages are from external contacts
+    isLinkedDevice: false,
   };
 }
 

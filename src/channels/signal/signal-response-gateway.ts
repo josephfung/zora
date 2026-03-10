@@ -48,9 +48,20 @@ export class SignalResponseGateway {
     const formatted = this._formatResponse(content);
 
     // Determine recipient: group or direct
-    const recipient = channelId.startsWith('group:')
-      ? channelId.slice('group:'.length)  // strip "group:" prefix → raw group ID
-      : to.phoneNumber;
+    // Strip synthetic prefixes: "group:" → bare group ID, "uuid:" → bare UUID
+    // signal-cli accepts phone numbers (+E.164) or bare UUIDs as recipients
+    let recipient: string;
+    if (channelId.startsWith('group:')) {
+      recipient = channelId.slice('group:'.length);
+    } else if (to.signalUuid) {
+      // Prefer UUID for reply — works even when sender didn't share phone number
+      recipient = to.signalUuid;
+    } else {
+      // Strip uuid: prefix if phone field contains synthetic UUID identifier
+      recipient = to.phoneNumber.startsWith('uuid:')
+        ? to.phoneNumber.slice('uuid:'.length)
+        : to.phoneNumber;
+    }
 
     const sendOptions: Record<string, unknown> = {};
 

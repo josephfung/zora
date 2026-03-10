@@ -25,11 +25,26 @@ model = "claude-haiku-4-5-20251001"  # Cheaper/faster model for intent extractio
 # Add one [[channel_policy.users]] block per trusted contact.
 # Channels: ["all"] for any channel, or ["group:UUID"] for specific groups.
 # Roles: trusted_admin | trusted_user | read_only | denied
+#
+# IMPORTANT — Sealed Sender (UUID-only envelopes):
+# Modern Signal clients use "sealed sender" which omits the phone number from
+# the envelope. signal-cli delivers sourceNumber=null and only sourceUuid.
+# Add a second entry with phone = "uuid:<signal-uuid>" to match these messages.
+# Find your Signal UUID by running:
+#   signal-cli -a +1XXXXXXXXXX listContacts --recipient +1YYYYYYYYYY
+# Or check signal-cli logs — UUID appears in envelope debug output.
 
 [[channel_policy.users]]
-# Trusted admin: full access from any channel
+# Trusted admin: full access from any channel (phone-number match)
 phone = "+14085551234"
 name = "Owner (you)"
+channels = ["all"]
+role = "trusted_admin"
+
+[[channel_policy.users]]
+# Same owner — UUID match for sealed-sender envelopes (sourceNumber=null)
+phone = "uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+name = "Owner (you, UUID)"
 channels = ["all"]
 role = "trusted_admin"
 

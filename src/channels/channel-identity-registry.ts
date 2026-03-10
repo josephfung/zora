@@ -65,6 +65,7 @@ export interface CapabilitySetConfig {
 export interface ChannelPolicyConfig {
   signal?: {
     phone_number?: string;
+    signal_cli_path?: string;
     linked_device?: boolean;
     daemon_port?: number;
     auto_trust_new_identities?: boolean;

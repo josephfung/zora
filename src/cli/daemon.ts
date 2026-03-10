@@ -22,6 +22,22 @@ import { createLogger } from '../utils/logger.js';
 import { TelegramGateway } from '../steering/telegram-gateway.js';
 import type { TelegramConfig } from '../steering/telegram-gateway.js';
 
+// Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
+// Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
+// needs to invoke claude as a provider subprocess.
+delete process.env['CLAUDECODE'];
+
+// Prevent EPIPE from crashing the process (e.g. broken pipe to signal-cli stdin/stdout).
+// Log and continue — the intake adapter's reconnect logic handles the actual recovery.
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') {
+    log.warn({ err: err.message }, 'EPIPE — signal-cli pipe broken; reconnect will handle it');
+  } else {
+    log.error({ err }, 'Uncaught exception — shutting down');
+    process.exit(1);
+  }
+});
+
 const log = createLogger('daemon');
 
 function createProviders(config: ZoraConfig): LLMProvider[] {

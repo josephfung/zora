@@ -76,11 +76,22 @@ signal-cli -a +1XXXXXXXXXX register --captcha "signalcaptcha://..." # SMS first
 signal-cli -a +1XXXXXXXXXX register --voice
 ```
 
+### Step 4 — Set profile name (required)
+
+Signal requires a profile name to deliver messages reliably. Without one, outgoing messages may appear in a separate "unknown sender" thread on recipient devices.
+
+```bash
+JAVA_HOME=$(brew --prefix openjdk@25) signal-cli -a +1XXXXXXXXXX \
+  updateProfile --name "Zora"
+```
+
+Replace `"Zora"` with whatever display name you want for your bot.
+
 ### Smoke test
 
 ```bash
 # Should print an INFO log with no errors
-signal-cli -a +1XXXXXXXXXX receive --timeout 3
+JAVA_HOME=$(brew --prefix openjdk@25) signal-cli -a +1XXXXXXXXXX receive --timeout 3
 ```
 
 Signal keys are stored at `~/.local/share/signal-cli/` — never committed to the repo.
@@ -156,6 +167,11 @@ When Zora boots, it checks for `config/channel-policy.toml`. If found:
 | `AuthorizationFailed: 403` | CAPTCHA expired | Solve a fresh CAPTCHA (they expire in ~3 min) |
 | `Invalid verification method: voice` | Skipped SMS step | Do SMS register first, then voice |
 | Channel not starting | Missing config | Check `config/channel-policy.toml` exists |
+| `UnsupportedClassVersionError: 69.0` | Java too old | signal-cli 0.14.1 requires Java 25; set `JAVA_HOME=$(brew --prefix openjdk@25)` before starting Zora |
+| Sends succeed but no message received | signal-cli version mismatch | Set `signal_cli_path = "~/.local/bin/signal-cli"` in TOML so Zora uses 0.14.1, not the bundled 0.14.0 |
+| Bot messages appear in separate unknown chat | No profile name set | Run `signal-cli updateProfile --name "Zora"` (Step 4 above) |
+| First messages not visible | Signal Message Requests | Check Message Requests — first contact from an unknown number goes there; accept to merge |
+| Dashboard port conflict | Multiple Zora instances | Set `dashboard_port` in `~/.zora/config.toml` steering section; each instance needs a unique port |
 | Unknown sender dropped | Not in policy | Add `[[channel_policy.users]]` block |
 
 ## Environment Variables

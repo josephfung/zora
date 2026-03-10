@@ -257,7 +257,12 @@ describe('SignalIntakeAdapter — INVARIANT-7 (max retries)', () => {
     setGlobalConnectError(new Error('connection refused'));
 
     const adapter = new SignalIntakeAdapter('+14155551234');
+
+    // Attach a rejection handler immediately so the promise is never "unhandled"
+    // while we drain the fake timers.
     const startPromise = adapter.start();
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    startPromise.catch(() => {});
 
     // Drain all backoff timers (1s, 2s, 4s, 8s, 16s + one extra)
     for (let i = 0; i < 7; i++) {
