@@ -85,24 +85,8 @@ export function extractChannelId(envelope: {
 /** Maximum allowed message length (DoS protection) */
 export const MAX_MESSAGE_LENGTH = 10_000;
 
-/**
- * Maps a full signal-sdk message event to a ChannelMessage.
- * Throws if message exceeds DoS length limit.
- *
- * signal-sdk message event shape:
- *   {
- *     envelope: {
- *       sourceNumber, sourceUuid, sourceName,
- *       timestamp,
- *       dataMessage: {
- *         message,       // text content
- *         groupInfo?,    // present for group messages
- *         attachments?   // array of attachment objects
- *       }
- *     }
- *   }
- */
-export function signalEventToChannelMessage(event: {
+/** signal-sdk message event shape */
+export interface SignalEvent {
   envelope: {
     sourceNumber?: string;
     sourceUuid?: string;
@@ -114,7 +98,13 @@ export function signalEventToChannelMessage(event: {
       attachments?: Array<{ id?: string; filename?: string }>;
     };
   };
-}): ChannelMessage {
+}
+
+/**
+ * Maps a full signal-sdk message event to a ChannelMessage.
+ * Throws if message exceeds DoS length limit.
+ */
+export function signalEventToChannelMessage(event: SignalEvent): ChannelMessage {
   const { envelope } = event;
   const identity = envelopeToChannelIdentity(envelope);
   const { channelId, channelType } = extractChannelId(envelope);
@@ -132,13 +122,16 @@ export function signalEventToChannelMessage(event: {
     .map(a => a.filename ?? a.id ?? "unknown")
     .filter(Boolean);
 
+  // Capture a single timestamp to avoid id/timestamp skew when envelope.timestamp is absent
+  const ts = envelope.timestamp ?? Date.now();
+
   return {
-    id: String(envelope.timestamp ?? Date.now()),
+    id: String(ts),
     from: identity,
     channelId,
     channelType,
     content,
-    timestamp: new Date(envelope.timestamp ?? Date.now()),
+    timestamp: new Date(ts),
     attachments: attachments.length > 0 ? attachments : undefined,
   };
 }

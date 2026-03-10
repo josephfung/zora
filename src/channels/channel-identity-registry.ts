@@ -11,6 +11,7 @@
 
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { CapabilitySet } from "../types/channel.js";
 
 // Using smol-toml or @iarna/toml if available, fallback to manual parse
 // Try dynamic import to handle either package
@@ -125,9 +126,18 @@ export class ChannelIdentityRegistry {
     return this.config.channel_policy?.users ?? [];
   }
 
-  /** Get a specific user policy by phone number */
+  /**
+   * Get a specific user policy by phone number.
+   * Normalizes input to handle minor formatting differences before lookup.
+   */
   getUser(phone: string): UserPolicy | undefined {
-    return this.getUsers().find(u => u.phone === phone);
+    // Normalize: strip whitespace, ensure + prefix for E.164 comparisons
+    const normalized = phone.trim().replace(/[\s\-().]/g, "");
+    const withPlus = normalized.startsWith("+") ? normalized : "+" + normalized;
+    return this.getUsers().find(u => {
+      const stored = u.phone.trim().replace(/[\s\-().]/g, "");
+      return stored === withPlus || stored === normalized;
+    });
   }
 
   /** Get all capability set definitions */
@@ -135,9 +145,36 @@ export class ChannelIdentityRegistry {
     return this.config.capability_sets ?? {};
   }
 
-  /** Get capability set config for a given role */
-  getCapabilitySet(role: string): CapabilitySetConfig | undefined {
+  /** Get raw capability set config (snake_case) for a given role */
+  getCapabilitySetConfig(role: string): CapabilitySetConfig | undefined {
     return this.getCapabilitySets()[role];
+  }
+
+  /**
+   * Get a fully-typed CapabilitySet (camelCase) for a given role and sender.
+   * Transforms snake_case TOML config fields to the CapabilitySet interface.
+   * Returns undefined when the role is not found.
+   */
+  getCapabilitySet(role: string, senderPhone: string, channelId: string): CapabilitySet | undefined {
+    const cfg = this.getCapabilitySetConfig(role);
+    if (!cfg) return undefined;
+    return {
+      senderPhone,
+      channelId,
+      role,
+      allowedTools: cfg.tools ?? [],
+      destructiveOpsAllowed: cfg.destructive_ops ?? false,
+      actionBudget: cfg.action_budget ?? 0,
+      paramConstraints: cfg.param_constraints ? {
+        bash: cfg.param_constraints.bash ? {
+          commandAllowlist: cfg.param_constraints.bash.command_allowlist,
+          commandBlocklist: cfg.param_constraints.bash.command_blocklist,
+        } : undefined,
+        write_file: cfg.param_constraints.write_file ? {
+          pathAllowlist: cfg.param_constraints.write_file.path_allowlist,
+        } : undefined,
+      } : undefined,
+    };
   }
 
   /** Get Signal daemon configuration */

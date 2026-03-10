@@ -124,6 +124,7 @@ export class QuarantineProcessor {
     });
 
     let resultText = "";
+    let hasResult = false;  // Track if we received a definitive "result" event
 
     for await (const message of sdkQuery) {
       if (message.type === "result") {
@@ -132,9 +133,11 @@ export class QuarantineProcessor {
           const errMsg = resultMsg.errors?.join("; ") ?? "Quarantine LLM returned an error";
           throw new Error(errMsg);
         }
+        // "result" event is authoritative — reset any assistant accumulation
         resultText = resultMsg.result ?? "";
-      } else if (message.type === "assistant") {
-        // Collect text blocks from assistant messages as fallback
+        hasResult = true;
+      } else if (message.type === "assistant" && !hasResult) {
+        // Accumulate assistant text blocks only as fallback when no "result" event yet
         const assistantMsg = message as {
           type: "assistant";
           message: { content: Array<{ type: string; text?: string }> };

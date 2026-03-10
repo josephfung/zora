@@ -4,7 +4,7 @@
  * Types for the channel identity, messaging, and capability enforcement
  * system. These are the foundation for the entire Signal integration.
  *
- * See: /Users/ryaker/Dev/Zora_Sims/SPEC-signal-secure-channel.md §5
+ * See: SPEC-signal-secure-channel.md §5
  */
 
 // INVARIANT-1: No tool execution without a valid, current CapabilitySet
@@ -58,12 +58,17 @@ export interface StructuredIntent {
   suspicious_reason?: string;
 }
 
-/** Denied capability set — used when sender is not in policy or role is null */
-export const DENIED_CAPABILITY: CapabilitySet = {
-  senderPhone: "",
-  channelId: "",
-  role: "denied",
-  allowedTools: [],
-  destructiveOpsAllowed: false,
-  actionBudget: 0,
-};
+/**
+ * Returns a fresh denied CapabilitySet — used when sender is not in policy or role is null.
+ * Returns a new object each call to prevent mutation of the default-deny path.
+ */
+export function deniedCapability(): CapabilitySet {
+  return {
+    senderPhone: "",
+    channelId: "",
+    role: "denied",
+    allowedTools: [],
+    destructiveOpsAllowed: false,
+    actionBudget: 0,
+  };
+}
