@@ -20,17 +20,56 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import fs from 'node:fs';
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
+const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const ZORA_CONFIG = path.join(os.homedir(), '.zora', 'config.toml');
 const SESSIONS_DIR = path.join(os.homedir(), '.zora', 'sessions');
 const OBSERVATIONS_DIR = path.join(os.homedir(), '.zora', 'memory', 'observations');
 const DAILY_DIR = path.join(os.homedir(), '.zora', 'memory', 'daily');
-const BINARY = 'zora-agent';
+
+/** Resolve CLI to repo-local built binary when available, else global install. */
+function resolveCliEntrypoint(): { bin: string; prefix: string[] } {
+  const localCli = path.join(REPO_ROOT, 'dist', 'cli', 'index.js');
+  if (fs.existsSync(localCli)) {
+    return { bin: process.execPath, prefix: [localCli] };
+  }
+  return { bin: 'zora-agent', prefix: [] };
+}
+
+const { bin: BINARY, prefix: BINARY_PREFIX } = resolveCliEntrypoint();
+
 const TIMEOUT_MS = 120_000;
+
+/**
+ * Read the rank-1 provider id from config.toml at runtime so tests
+ * aren't hard-wired to a single developer's layout.
+ */
+function getRank1ProviderId(): string {
+  try {
+    const raw = fs.readFileSync(ZORA_CONFIG, 'utf8');
+    // Find all [[providers]] blocks, pick the one with rank = 1 (or lowest rank)
+    const blocks = raw.split(/(?=\[\[providers\]\])/g).filter(b => b.includes('[[providers]]'));
+    let best: { rank: number; id: string } | null = null;
+    for (const block of blocks) {
+      const rankMatch = block.match(/rank\s*=\s*(\d+)/);
+      const idMatch = block.match(/id\s*=\s*["']([^"']+)["']/);
+      if (rankMatch && idMatch) {
+        const rank = parseInt(rankMatch[1]!, 10);
+        if (!best || rank < best.rank) {
+          best = { rank, id: idMatch[1]! };
+        }
+      }
+    }
+    return best?.id ?? 'claude-sonnet';
+  } catch {
+    return 'claude-sonnet';
+  }
+}
 
 // Secrets file — its content must never appear in LLM responses.
 const SECRETS_FILE = path.join(os.homedir(), '.zora', 'secrets.env');
@@ -58,7 +97,7 @@ function ask(
   if (opts.maxCostTier) args.push('--max-cost-tier', opts.maxCostTier);
   args.push(prompt);
 
-  const result = spawnSync(BINARY, args, {
+  const result = spawnSync(BINARY, [...BINARY_PREFIX, ...args], {
     encoding: 'utf8',
     timeout: TIMEOUT_MS,
     env,
@@ -89,7 +128,7 @@ async function probeRouting(
   if (opts.model) args.push('--model', opts.model);
   args.push(prompt);
 
-  const child = spawn(BINARY, args, {
+  const child = spawn(BINARY, [...BINARY_PREFIX, ...args], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: process.env,
   });
@@ -204,15 +243,9 @@ describe.skipIf(SKIP)('Routing: correct provider selection', () => {
     expect(start?.source).toBe('claude-sonnet');
   }, TIMEOUT_MS + 5_000);
 
-  it('default (no --model) routes to rank-1 provider (claude-sonnet)', () => {
+  it('default (no --model) routes to rank-1 provider', () => {
+    const rank1 = getRank1ProviderId();
     const t0 = Date.now();
-    // Use haiku here to avoid rate-limiting after the explicit --model sonnet test above.
-    // The key thing we verify is the session source field, NOT which LLM answered.
-    // To test the default routing we need no --model flag, but we need the task to
-    // classify as something haiku CAN handle (haiku has 'coding','creative' caps).
-    // So we use a creative prompt — router classifies 'write' → creative → picks sonnet
-    // (rank 1 with creative). But since we may be rate-limited, we accept any provider
-    // that has 'reasoning' OR matches rank 1.
     const r = ask('write one word: ROUTING_DEFAULT_CHECK');
     expect(r.error, r.stderr).toBeUndefined();
     expect(r.status).toBe(0);
@@ -222,8 +255,7 @@ describe.skipIf(SKIP)('Routing: correct provider selection', () => {
     const events = parseSession(sf!);
     const start = events.find(e => e.type === 'task.start');
     expect(start?.source, 'No task.start with source in session log').toBeTruthy();
-    // Rank 1 in ~/.zora/config.toml is claude-sonnet
-    expect(start?.source).toBe('claude-sonnet');
+    expect(start?.source).toBe(rank1);
   }, TIMEOUT_MS + 5_000);
 });
 
@@ -254,13 +286,13 @@ describe.skipIf(SKIP)('LLM quality: coherent, verifiable responses', () => {
     expect(r.error).toBeUndefined();
     expect(r.status).toBe(0);
 
-    // Read the actual LLM text from the session log (done.content.text) rather
-    // than stdout, which also contains pino JSON log lines and spinner output.
+    // Read the actual LLM text from the session log — text is in `text` type events,
+    // not in the `done` event content (which carries metrics, not generated text).
     const sf = latestSessionAfter(t0);
     expect(sf).not.toBeNull();
     const events = parseSession(sf!);
-    const done = events.find(e => e.type === 'done');
-    const text = (done?.content['text'] as string | undefined)?.trim() ?? '';
+    const textEvents = events.filter(e => e.type === 'text');
+    const text = textEvents.map(e => (e.content['text'] as string | undefined) ?? '').join('').trim();
 
     expect(text.split(/\s+/).length, 'Response too short').toBeGreaterThan(8);
     expect(text).toMatch(/[.!?]/);
@@ -329,15 +361,16 @@ describe.skipIf(SKIP)('Observability: session log completeness', () => {
     expect(start?.content['jobId']).toBe(end?.content['jobId']);
   });
 
-  it('done event includes duration_ms, num_turns, and total_cost_usd', () => {
-    const done = events.find(e => e.type === 'done');
-    expect(done, 'No done event').toBeDefined();
-    expect(typeof done!.content['duration_ms']).toBe('number');
-    expect(done!.content['duration_ms'] as number).toBeGreaterThan(0);
-    expect(typeof done!.content['num_turns']).toBe('number');
-    expect(done!.content['num_turns'] as number).toBeGreaterThanOrEqual(1);
-    expect(typeof done!.content['total_cost_usd']).toBe('number');
-    expect(done!.content['total_cost_usd'] as number).toBeGreaterThan(0);
+  it('task.end includes duration_ms, num_turns, and total_cost_usd', () => {
+    // Per src/types.ts: duration_ms, num_turns, total_cost_usd are on task.end, not done.
+    const end = events.find(e => e.type === 'task.end');
+    expect(end, 'No task.end event').toBeDefined();
+    expect(typeof end!.content['duration_ms']).toBe('number');
+    expect(end!.content['duration_ms'] as number).toBeGreaterThan(0);
+    expect(typeof end!.content['num_turns']).toBe('number');
+    expect(end!.content['num_turns'] as number).toBeGreaterThanOrEqual(1);
+    // total_cost_usd may be 0 in free-tier scenarios — just check it's a number
+    expect(typeof end!.content['total_cost_usd']).toBe('number');
   });
 
   it('task.end records success=true and duration_ms', () => {
@@ -348,10 +381,14 @@ describe.skipIf(SKIP)('Observability: session log completeness', () => {
     expect(end!.content['duration_ms'] as number).toBeGreaterThan(0);
   });
 
-  it('all events share the same source (provider did not change mid-task)', () => {
-    const sources = new Set(events.map(e => e.source));
-    // All events should come from the same provider
-    expect(sources.size).toBe(1);
+  it('task.start and task.end share the same provider source', () => {
+    // The orchestrator emits events from multiple sources (provider, orchestrator,
+    // negative-cache, etc.) — only lifecycle events must share the same provider.
+    const start = events.find(e => e.type === 'task.start');
+    const end = events.find(e => e.type === 'task.end');
+    expect(start?.source, 'task.start missing source').toBeTruthy();
+    expect(end?.source, 'task.end missing source').toBeTruthy();
+    expect(start?.source).toBe(end?.source);
   });
 });
 

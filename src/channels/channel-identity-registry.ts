@@ -131,13 +131,13 @@ export class ChannelIdentityRegistry {
    * Normalizes input to handle minor formatting differences before lookup.
    */
   getUser(phone: string): UserPolicy | undefined {
-    // Normalize: strip whitespace, ensure + prefix for E.164 comparisons
-    const normalized = phone.trim().replace(/[\s\-().]/g, "");
-    const withPlus = normalized.startsWith("+") ? normalized : "+" + normalized;
-    return this.getUsers().find(u => {
-      const stored = u.phone.trim().replace(/[\s\-().]/g, "");
-      return stored === withPlus || stored === normalized;
-    });
+    // Normalize both sides: strip formatting, ensure + prefix for consistent comparison.
+    const norm = (p: string) => {
+      const stripped = p.trim().replace(/[\s\-().]/g, "");
+      return stripped.startsWith("+") ? stripped : "+" + stripped;
+    };
+    const lookup = norm(phone);
+    return this.getUsers().find(u => norm(u.phone) === lookup);
   }
 
   /** Get all capability set definitions */
@@ -188,7 +188,7 @@ export class ChannelIdentityRegistry {
   }
 
   /** Get prompt injection config */
-  getPromptInjectionConfig(): ChannelPolicyConfig["channels"] extends undefined ? undefined : NonNullable<ChannelPolicyConfig["channels"]>["prompt_injection"] {
+  getPromptInjectionConfig(): NonNullable<ChannelPolicyConfig["channels"]>["prompt_injection"] {
     return this.config.channels?.prompt_injection;
   }
 
