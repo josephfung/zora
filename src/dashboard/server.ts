@@ -22,7 +22,7 @@ import { createLogger } from '../utils/logger.js';
 import { CostTracker } from './cost-tracker.js';
 import { shouldIncludeEvent } from '../utils/event-filter.js';
 import type { VerbosityLevel } from '../utils/event-filter.js';
-import type { AgentEvent } from '../types.js';
+import type { AgentEvent, ProjectConfig } from '../types.js';
 
 const log = createLogger('dashboard');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +57,10 @@ export interface DashboardOptions {
   costTracker?: CostTracker;
   /** ZoraPolicy — enables /api/policy endpoint for the Security settings tab */
   policy?: import('../types.js').ZoraPolicy;
+  /** Per-project identity config — name, color, icon for multi-instance differentiation */
+  projectConfig?: ProjectConfig;
+  /** Agent name from config.agent.name — used as fallback when project.name is unset */
+  agentName?: string;
 }
 
 export class DashboardServer {
@@ -454,6 +458,34 @@ export class DashboardServer {
           blockedCommands: p.shell.denied_commands ?? [],
         },
       });
+    });
+
+    // GET /api/project — project identity for multi-instance differentiation
+    this._app.get('/api/project', (_req, res) => {
+      const projectName =
+        this._options.projectConfig?.name ??
+        this._options.agentName ??
+        'Zora';
+
+      res.json({
+        name: projectName,
+        description: this._options.projectConfig?.description ?? null,
+        color: this._options.projectConfig?.color ?? null,
+        icon: this._options.projectConfig?.icon ?? null,
+        port: this._options.port ?? 8070,
+      });
+    });
+
+    // GET /favicon.svg — dynamic colored favicon matching project.color
+    this._app.get('/favicon.svg', (_req, res) => {
+      const color = this._options.projectConfig?.color ?? '#ffb347';
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.send(
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">` +
+        `<rect width="32" height="32" rx="6" fill="${color}"/>` +
+        `<text x="16" y="22" text-anchor="middle" font-size="16" fill="#0a0b0f" font-family="monospace" font-weight="bold">Z</text>` +
+        `</svg>`
+      );
     });
 
     // Catch-all: serve index.html for SPA routing (with token injection).

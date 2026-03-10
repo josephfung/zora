@@ -98,6 +98,8 @@ async function main() {
     },
     port: config.steering.dashboard_port ?? 8070,
     host: process.env.ZORA_BIND_HOST,
+    projectConfig: config.project,
+    agentName: config.agent.name,
   });
   await dashboard.start();
 
