@@ -38,6 +38,7 @@ import { ShellSafetyHook } from '../hooks/built-in/shell-safety.js';
 import { AuditLogHook } from '../hooks/built-in/audit-log.js';
 import { RateLimitHook } from '../hooks/built-in/rate-limit.js';
 import { SecretRedactHook } from '../hooks/built-in/secret-redact.js';
+import { SensitiveFileGuardHook } from '../hooks/built-in/sensitive-file-guard.js';
 import { Router } from './router.js';
 import { FailoverController } from './failover-controller.js';
 import { RetryQueue } from './retry-queue.js';
@@ -397,7 +398,10 @@ export class Orchestrator {
       scheduleConsolidation();
     }, 30 * 1000);
 
-    // Register default tool-level hooks
+    // Register default tool-level hooks.
+    // SensitiveFileGuardHook is registered FIRST — it is a hard-coded,
+    // non-bypassable layer that cannot be disabled via policy.toml.
+    this._toolHookRunner.register(SensitiveFileGuardHook);
     this._toolHookRunner.register(ShellSafetyHook);
     this._toolHookRunner.register(new AuditLogHook());
     this._toolHookRunner.register(new RateLimitHook([
@@ -1152,12 +1156,23 @@ export class Orchestrator {
             // so /etc doesn't match /etc-foo and ~/.ssh doesn't miss due to unexpanded ~
             const inside = (root: string) => {
               const expanded = path.resolve(root.replace(/^~/, os.homedir()));
-              return normalizedPath === expanded || normalizedPath.startsWith(expanded + path.sep);
+              // Also resolve symlinks so a symlink into a denied dir is caught
+              let realExpanded = expanded;
+              try { realExpanded = fs.realpathSync(expanded); } catch { /* path may not exist */ }
+              let realNorm = normalizedPath;
+              try { realNorm = fs.realpathSync(normalizedPath); } catch { /* path may not exist */ }
+              return (
+                (normalizedPath === expanded || normalizedPath.startsWith(expanded + path.sep)) ||
+                (realNorm === realExpanded || realNorm.startsWith(realExpanded + path.sep))
+              );
             };
             if (fsPol.denied_paths?.some(inside)) {
               return { allowed: false, reason: 'path in denied_paths' };
             }
-            if (fsPol.allowed_paths?.length && !fsPol.allowed_paths.some(inside)) {
+            // When allowed_paths is explicitly set (even as an empty array), require
+            // the path to be inside one of the allowed roots. This matches PolicyEngine
+            // semantics where an empty allowlist means no filesystem access is permitted.
+            if (fsPol.allowed_paths != null && !fsPol.allowed_paths.some(inside)) {
               return { allowed: false, reason: 'path not in allowed_paths' };
             }
             return { allowed: true };
