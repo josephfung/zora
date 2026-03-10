@@ -110,6 +110,8 @@ export interface ZoraExecutionOptions {
   streamTimeout?: number;
   /** ORCH-14: Optional context transform callback applied before each follow-up */
   transformContext?: TransformContextFn;
+  /** INVARIANT-2: Channel tool allowlist — filter applied before SDK invocation */
+  toolAllowlist?: string[];
 }
 
 const DEFAULT_TOOLS = [
@@ -164,7 +166,16 @@ export class ExecutionLoop {
     }
 
     const sdkOptions: Record<string, unknown> = {
-      allowedTools: [...(this._opts.allowedTools ?? DEFAULT_TOOLS), ...customToolNames],
+      // INVARIANT-2: apply channel toolAllowlist filter before SDK invocation
+      allowedTools: (() => {
+        const base = [...(this._opts.allowedTools ?? DEFAULT_TOOLS), ...customToolNames];
+        if (!this._opts.toolAllowlist || this._opts.toolAllowlist.length === 0) return base;
+        const allowSet = new Set(this._opts.toolAllowlist);
+        return base.filter(t => {
+          const toolBase = t.split('__').pop() ?? t;
+          return allowSet.has(t) || allowSet.has(toolBase) || allowSet.has(toolBase.toLowerCase());
+        });
+      })(),
       permissionMode: this._opts.permissionMode ?? 'default',
       mcpServers,
       agents: this._opts.agents ?? {},

@@ -73,6 +73,7 @@ import type { WorkflowStep } from './step-classifier.js';
 import { runCodeToolStep } from './code-tool-runner.js';
 import { CostTracker } from '../dashboard/cost-tracker.js';
 import { createPlanWorkflowTool } from '../tools/planning-tool.js';
+import type { CapabilitySet, ChannelMessage } from '../types/channel.js';
 
 const log = createLogger('orchestrator');
 
@@ -92,6 +93,17 @@ export interface SubmitTaskOptions {
   onEvent?: (event: AgentEvent) => void;
   /** ORCH-14: Optional context transform callback applied to history before follow-ups */
   transformContext?: TransformContextFn;
+  /**
+   * Channel context for Signal/channel-sourced tasks.
+   * When present: enforces capability.allowedTools, overrides actionBudget,
+   * sets dry-run mode if !destructiveOpsAllowed.
+   * INVARIANT-1: No tool execution without a valid CapabilitySet.
+   * INVARIANT-2: Tool allowlist applied before SDK invocation.
+   */
+  channelContext?: {
+    capability: CapabilitySet;
+    channelMessage: ChannelMessage;
+  };
 }
 
 export class Orchestrator {
@@ -588,6 +600,52 @@ export class Orchestrator {
       customTools,
       canUseTool: this._buildTokenAwareCanUseTool(jobId),
     };
+
+    // Channel capability enforcement (INVARIANT-1, INVARIANT-2)
+    if (options.channelContext) {
+      const { capability } = options.channelContext;
+      // Override action budget with channel capability budget
+      if (capability.actionBudget > 0) {
+        taskContext.maxTurns = capability.actionBudget;
+        if (taskContext.errorBudget) {
+          taskContext.errorBudget.maxTurns = capability.actionBudget;
+        }
+      }
+      // Compose a canUseTool that enforces channel tool allowlist
+      // INVARIANT-2: filter applied before SDK invocation, not after
+      const existingCanUseTool = taskContext.canUseTool;
+      const allowedTools = new Set(capability.allowedTools);
+      taskContext.canUseTool = async (toolName, input, opts) => {
+        // Normalize: SDK tool names may be prefixed (e.g. "Read", "Bash")
+        // Match against allowedTools by base name (case-insensitive)
+        const baseName = toolName.split('__').pop() ?? toolName;
+        const isAllowed =
+          allowedTools.has(toolName) ||
+          allowedTools.has(baseName) ||
+          allowedTools.has(baseName.toLowerCase()) ||
+          allowedTools.has(toolName.toLowerCase());
+        if (!isAllowed) {
+          log.warn(
+            { tool: toolName, channelId: capability.channelId, role: capability.role },
+            'Tool blocked by channel capability set'
+          );
+          return { behavior: 'deny', message: `Tool '${toolName}' is not permitted for your access level.` };
+        }
+        // Apply additional destructive ops check
+        if (!capability.destructiveOpsAllowed) {
+          const destructiveTools = new Set(['Bash', 'bash', 'Write', 'write_file', 'Edit', 'edit_file']);
+          if (destructiveTools.has(baseName) || destructiveTools.has(toolName)) {
+            log.warn({ tool: toolName }, 'Destructive op blocked — capability.destructiveOpsAllowed=false');
+            return { behavior: 'deny', message: `Destructive operation '${toolName}' not permitted for your access level.` };
+          }
+        }
+        // Delegate to existing policy canUseTool if present
+        if (existingCanUseTool) {
+          return existingCanUseTool(toolName, input, opts);
+        }
+        return { behavior: 'allow' };
+      };
+    }
 
     // ORCH-12: Run onTaskStart hooks (can modify context before routing)
     const hookedContext = await this._hookRunner.runOnTaskStart(taskContext);
