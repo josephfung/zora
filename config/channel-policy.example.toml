@@ -3,10 +3,11 @@
 # IMPORTANT: channel-policy.toml is in .gitignore — never commit real phone numbers.
 
 [signal]
-# The phone number signal-cli is linked to (your Zora bot number).
-# Run: npx signal-sdk link --name "zora-agent" to link as secondary device.
+# The phone number registered with signal-cli (your Zora bot number).
+# See docs/SIGNAL_CHANNEL_SETUP.md for registration instructions.
 phone_number = "+14155551234"
-linked_device = true
+signal_cli_path = "~/.local/bin/signal-cli"  # Path to signal-cli 0.14.1+
+linked_device = false        # false = registered as primary; true = linked secondary device
 daemon_port = 9200           # Internal JSON-RPC port for signal-cli daemon
 auto_trust_new_identities = false   # Security: require explicit allowlisting
 
