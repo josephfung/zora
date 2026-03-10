@@ -87,9 +87,21 @@ export class GeminiProvider implements LLMProvider {
 
     return new Promise((resolve) => {
       let resolved = false;
+      // Timeout: if auth check hangs (e.g. stdin closed in daemon context), treat as unavailable.
+      const timeout = setTimeout(() => {
+        if (resolved) return;
+        resolved = true;
+        child.kill();
+        const status = { valid: false, expiresAt: null, canAutoRefresh: false, requiresInteraction: true };
+        this._lastAuthStatus = status;
+        this._lastAuthCheckAt = Date.now();
+        resolve(status);
+      }, 5000);
+
       // Try `gemini auth status` first for real auth verification.
       // "Loaded cached credentials." goes to stderr on some versions, so read both.
-      const child = spawn(this._cliPath, ['auth', 'status']);
+      // stdin: 'ignore' prevents hanging when daemon has no TTY.
+      const child = spawn(this._cliPath, ['auth', 'status'], { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
 
       if (child.stdout) {
@@ -104,6 +116,7 @@ export class GeminiProvider implements LLMProvider {
       }
 
       child.on('error', () => {
+        clearTimeout(timeout);
         if (resolved) return;
         // CLI binary not found — fall back to --version check
         const fallback = spawn(this._cliPath, ['--version']);
@@ -127,6 +140,7 @@ export class GeminiProvider implements LLMProvider {
       });
 
       child.on('close', (_code) => {
+        clearTimeout(timeout);
         if (resolved) return;
         resolved = true;
         // gemini auth status can exit non-zero for reasons unrelated to auth

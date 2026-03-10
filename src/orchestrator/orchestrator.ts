@@ -73,6 +73,12 @@ import type { WorkflowStep } from './step-classifier.js';
 import { runCodeToolStep } from './code-tool-runner.js';
 import { CostTracker } from '../dashboard/cost-tracker.js';
 import { createPlanWorkflowTool } from '../tools/planning-tool.js';
+import type { CapabilitySet, ChannelMessage } from '../types/channel.js';
+import { ChannelIdentityRegistry } from '../channels/channel-identity-registry.js';
+import { ChannelPolicyGate } from '../channels/channel-policy-gate.js';
+import { CapabilityResolver } from '../channels/capability-resolver.js';
+import { SignalIntakeAdapter } from '../channels/signal/signal-intake-adapter.js';
+import { SignalResponseGateway } from '../channels/signal/signal-response-gateway.js';
 
 const log = createLogger('orchestrator');
 
@@ -92,6 +98,17 @@ export interface SubmitTaskOptions {
   onEvent?: (event: AgentEvent) => void;
   /** ORCH-14: Optional context transform callback applied to history before follow-ups */
   transformContext?: TransformContextFn;
+  /**
+   * Channel context for Signal/channel-sourced tasks.
+   * When present: enforces capability.allowedTools, overrides actionBudget,
+   * sets dry-run mode if !destructiveOpsAllowed.
+   * INVARIANT-1: No tool execution without a valid CapabilitySet.
+   * INVARIANT-2: Tool allowlist applied before SDK invocation.
+   */
+  channelContext?: {
+    capability: CapabilitySet;
+    channelMessage: ChannelMessage;
+  };
 }
 
 export class Orchestrator {
@@ -158,6 +175,13 @@ export class Orchestrator {
   private _tlciDispatcher?: TLCIDispatcher;
   private _tlciCostTracker?: CostTracker;
   private _tlciInitP?: Promise<void>; // Promise guard prevents double-init on concurrent calls
+
+  // Signal channel components (optional — only initialized if channel-policy.toml exists)
+  private _signalIntake?: SignalIntakeAdapter;
+  private _signalGateway?: SignalResponseGateway;
+  private _channelRegistry?: ChannelIdentityRegistry;
+  private _channelPolicyGate?: ChannelPolicyGate;
+  private _capabilityResolver?: CapabilityResolver;
 
   constructor(options: OrchestratorOptions) {
     this._config = options.config;
@@ -414,7 +438,115 @@ export class Orchestrator {
     // (daemon.ts reads getTLCICostTracker() synchronously when constructing DashboardServer)
     await this._ensureTLCI();
 
+    // Signal channel — optional, only boots if config/channel-policy.toml exists
+    await this._bootSignalChannel();
+
     this._booted = true;
+  }
+
+  /**
+   * Boot the Signal secure channel if config/channel-policy.toml is present.
+   * Skips gracefully if the file doesn't exist (channel disabled).
+   */
+  private async _bootSignalChannel(): Promise<void> {
+    const policyPath = path.join(this._baseDir, 'config', 'channel-policy.toml');
+    try {
+      await fs.promises.access(policyPath);
+    } catch {
+      log.info('[signal] channel-policy.toml not found — Signal channel disabled');
+      return;
+    }
+
+    try {
+      this._channelRegistry = await ChannelIdentityRegistry.load(policyPath);
+      this._channelRegistry.listenForReload();
+
+      const modelPath = path.join(this._baseDir, 'config', 'casbin', 'model.conf');
+      this._channelPolicyGate = new ChannelPolicyGate(this._channelRegistry, modelPath);
+      await this._channelPolicyGate.init();
+
+      this._capabilityResolver = new CapabilityResolver(
+        this._channelRegistry,
+        this._channelPolicyGate,
+      );
+
+      const signalConfig = this._channelRegistry.getSignalConfig();
+      const phoneNumber = signalConfig?.phone_number ?? process.env['ZORA_SIGNAL_PHONE'];
+      if (!phoneNumber) {
+        log.warn('[signal] No phone_number in channel-policy.toml and ZORA_SIGNAL_PHONE not set — Signal channel disabled');
+        return;
+      }
+
+      const rawCliPath = signalConfig?.signal_cli_path;
+      const cliPath = rawCliPath
+        ? rawCliPath.replace(/^~/, process.env['HOME'] ?? '')
+        : undefined;
+      this._signalIntake = new SignalIntakeAdapter(phoneNumber, cliPath);
+      this._signalIntake.onMessage(async (msg: ChannelMessage) => {
+        await this._handleChannelMessage(msg);
+      });
+
+      await this._signalIntake.start();
+
+      // Share the connected SignalCli from intake — avoids a second disconnected instance
+      const connectedCli = this._signalIntake.getCli();
+      if (!connectedCli) throw new Error('SignalIntakeAdapter connected but getCli() returned null');
+      this._signalGateway = new SignalResponseGateway(connectedCli);
+      log.info({ phoneNumber }, '[signal] Channel online');
+    } catch (err) {
+      log.error({ err }, '[signal] Channel failed to start — continuing without it');
+    }
+  }
+
+  /**
+   * Handle an inbound ChannelMessage from Signal.
+   * Enforces policy gate → capability resolution → task submission.
+   */
+  private async _handleChannelMessage(msg: ChannelMessage): Promise<void> {
+    if (!this._channelPolicyGate || !this._capabilityResolver || !this._signalGateway) return;
+
+    // INVARIANT-3: Unknown senders receive no response
+    const allowed = await this._channelPolicyGate.canIntake(msg.from.phoneNumber, msg.channelId);
+    if (!allowed) {
+      log.warn({ sender: msg.from.phoneNumber }, '[signal] Unauthorized sender — silently dropped');
+      return;
+    }
+
+    const capability = await this._capabilityResolver.resolve(msg.from.phoneNumber, msg.channelId);
+    if (!capability || capability.allowedTools.length === 0) {
+      log.warn({ sender: msg.from.phoneNumber }, '[signal] No capability — denied');
+      return;
+    }
+
+    try {
+      let response = '';
+      await this.submitTask({
+        prompt: msg.content,
+        channelContext: { capability, channelMessage: msg },
+        onEvent: (event) => {
+          // Accumulate text deltas and full text events into the response
+          if (event.type === 'text' || event.type === 'text.delta') {
+            const c = event.content as { text?: string };
+            if (c?.text) response += c.text;
+          }
+        },
+      });
+
+      if (response) {
+        await this._signalGateway.send(msg.from, msg.channelId, response, {
+          quoteTimestamp: msg.timestamp.getTime(),
+          quoteAuthor: msg.from.phoneNumber,
+        });
+      }
+    } catch (err) {
+      log.error({ err, sender: msg.from.phoneNumber }, '[signal] Task failed');
+      // Send sanitized error — no stack traces, no internal paths
+      await this._signalGateway.send(
+        msg.from,
+        msg.channelId,
+        'Sorry, I ran into an error processing that request. Please try again.',
+      ).catch(() => { /* suppress send errors */ });
+    }
   }
 
   /**
@@ -445,6 +577,12 @@ export class Orchestrator {
     if (this._routineManager) {
       this._routineManager.stopAll();
       this._routineManager = null;
+    }
+
+    // Signal channel — graceful shutdown
+    if (this._signalIntake) {
+      await this._signalIntake.stop();
+      this._signalIntake = undefined;
     }
 
     this._booted = false;
@@ -588,6 +726,52 @@ export class Orchestrator {
       customTools,
       canUseTool: this._buildTokenAwareCanUseTool(jobId),
     };
+
+    // Channel capability enforcement (INVARIANT-1, INVARIANT-2)
+    if (options.channelContext) {
+      const { capability } = options.channelContext;
+      // Override action budget with channel capability budget
+      if (capability.actionBudget > 0) {
+        taskContext.maxTurns = capability.actionBudget;
+        if (taskContext.errorBudget) {
+          taskContext.errorBudget.maxTurns = capability.actionBudget;
+        }
+      }
+      // Compose a canUseTool that enforces channel tool allowlist
+      // INVARIANT-2: filter applied before SDK invocation, not after
+      const existingCanUseTool = taskContext.canUseTool;
+      const allowedTools = new Set(capability.allowedTools);
+      taskContext.canUseTool = async (toolName, input, opts) => {
+        // Normalize: SDK tool names may be prefixed (e.g. "Read", "Bash")
+        // Match against allowedTools by base name (case-insensitive)
+        const baseName = toolName.split('__').pop() ?? toolName;
+        const isAllowed =
+          allowedTools.has(toolName) ||
+          allowedTools.has(baseName) ||
+          allowedTools.has(baseName.toLowerCase()) ||
+          allowedTools.has(toolName.toLowerCase());
+        if (!isAllowed) {
+          log.warn(
+            { tool: toolName, channelId: capability.channelId, role: capability.role },
+            'Tool blocked by channel capability set'
+          );
+          return { behavior: 'deny', message: `Tool '${toolName}' is not permitted for your access level.` };
+        }
+        // Apply additional destructive ops check
+        if (!capability.destructiveOpsAllowed) {
+          const destructiveTools = new Set(['Bash', 'bash', 'Write', 'write_file', 'Edit', 'edit_file']);
+          if (destructiveTools.has(baseName) || destructiveTools.has(toolName)) {
+            log.warn({ tool: toolName }, 'Destructive op blocked — capability.destructiveOpsAllowed=false');
+            return { behavior: 'deny', message: `Destructive operation '${toolName}' not permitted for your access level.` };
+          }
+        }
+        // Delegate to existing policy canUseTool if present
+        if (existingCanUseTool) {
+          return existingCanUseTool(toolName, input, opts);
+        }
+        return { behavior: 'allow' };
+      };
+    }
 
     // ORCH-12: Run onTaskStart hooks (can modify context before routing)
     const hookedContext = await this._hookRunner.runOnTaskStart(taskContext);

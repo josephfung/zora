@@ -425,12 +425,12 @@ test.describe('Error Handling', () => {
     expect(res.status()).toBeGreaterThanOrEqual(400);
   });
 
-  test('unknown API route serves SPA index.html', async ({ request }) => {
+  test('unknown API route returns 404 JSON', async ({ request }) => {
     const res = await request.get(`${baseUrl}/api/nonexistent-route`);
-    // The catch-all serves index.html, not 404
-    expect(res.ok()).toBeTruthy();
-    const body = await res.text();
-    expect(body).toContain('Zora');
+    // API paths fall through to 404 rather than being served the SPA shell
+    expect(res.status()).toBe(404);
+    const body = await res.json();
+    expect(body).toHaveProperty('error');
   });
 
   test('dashboard shows error on steer failure', async ({ page }) => {

@@ -138,3 +138,11 @@ Each implementation agent works in its own git worktree. One worktree per agent,
 - **Prioritize by WSJF.** Use `./gaps/tracker.sh next` to find the highest-value remaining work.
 - **Context management**: No file in `gaps/` exceeds 1000 lines. Read structure-first, then targeted sections.
 - **One worktree per agent.** Don't work in the main repo directory during parallel implementation.
+
+## API Documentation Rule
+
+Before implementing any call to an external API (Twilio, Signal, OpenAI, Agent Phone, etc.):
+1. Use `mcp__plugin_context7_context7__resolve-library-id` to locate the library
+2. Then `mcp__plugin_context7_context7__query-docs` to fetch current docs
+
+Never assume API shape, auth headers, or endpoint paths from training data — always verify against live docs first. This prevents hallucinated parameters and outdated SDK usage.

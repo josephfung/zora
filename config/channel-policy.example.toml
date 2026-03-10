@@ -1,0 +1,103 @@
+# channel-policy.example.toml
+# Copy to config/channel-policy.toml and fill in real phone numbers.
+# IMPORTANT: channel-policy.toml is in .gitignore — never commit real phone numbers.
+
+[signal]
+# The phone number registered with signal-cli (your Zora bot number).
+# See docs/SIGNAL_CHANNEL_SETUP.md for registration instructions.
+phone_number = "+14155551234"
+signal_cli_path = "~/.local/bin/signal-cli"  # Path to signal-cli 0.14.1+
+linked_device = false        # false = registered as primary; true = linked secondary device
+daemon_port = 9200           # Internal JSON-RPC port for signal-cli daemon
+auto_trust_new_identities = false   # Security: require explicit allowlisting
+
+[channels.prompt_injection]
+enabled = true
+scanner_url = "http://localhost:8000"  # llm-guard REST API (optional)
+block_on_high_risk = true
+
+[channels.quarantine]
+enabled = true
+# Quarantine LLM processes raw channel input; no tool access
+model = "claude-haiku-4-5-20251001"  # Cheaper/faster model for intent extraction
+
+# ─── TRUST DEFINITIONS ───────────────────────────────────────────────────────
+# Add one [[channel_policy.users]] block per trusted contact.
+# Channels: ["all"] for any channel, or ["group:UUID"] for specific groups.
+# Roles: trusted_admin | trusted_user | read_only | denied
+#
+# IMPORTANT — Sealed Sender (UUID-only envelopes):
+# Modern Signal clients use "sealed sender" which omits the phone number from
+# the envelope. signal-cli delivers sourceNumber=null and only sourceUuid.
+# Add a second entry with phone = "uuid:<signal-uuid>" to match these messages.
+# Find your Signal UUID by running:
+#   signal-cli -a +1XXXXXXXXXX listContacts --recipient +1YYYYYYYYYY
+# Or check signal-cli logs — UUID appears in envelope debug output.
+
+[[channel_policy.users]]
+# Trusted admin: full access from any channel (phone-number match)
+phone = "+14085551234"
+name = "Owner (you)"
+channels = ["all"]
+role = "trusted_admin"
+
+[[channel_policy.users]]
+# Same owner — UUID match for sealed-sender envelopes (sourceNumber=null)
+phone = "uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+name = "Owner (you, UUID)"
+channels = ["all"]
+role = "trusted_admin"
+
+[[channel_policy.users]]
+# Trusted user: write access in specific group, read-only in DMs
+phone = "+16505551234"
+name = "Trusted Collaborator"
+channels = ["group:replace-with-real-group-uuid"]
+role = "trusted_user"
+dm_role = "read_only"       # Override role for direct messages
+
+[[channel_policy.users]]
+# Read-only collaborator
+phone = "+16195551234"
+name = "Read-Only Contact"
+channels = ["group:replace-with-real-group-uuid"]
+role = "read_only"
+
+# ─── CAPABILITY SET DEFINITIONS ──────────────────────────────────────────────
+# Define what each role is allowed to do.
+# tools: list of Zora tool names the role can use.
+# destructive_ops: if false, write/delete operations are dry-run previews.
+# action_budget: max tool calls per task.
+
+[capability_sets.trusted_admin]
+tools = [
+  "read_file", "write_file", "edit_file",
+  "bash", "glob", "grep",
+  "web_search", "web_fetch",
+  "memory_search", "memory_save",
+  "task"
+]
+destructive_ops = true
+action_budget = 100
+
+[capability_sets.trusted_user]
+tools = [
+  "read_file", "write_file",
+  "web_search", "web_fetch",
+  "memory_search"
+]
+destructive_ops = false
+action_budget = 30
+
+[capability_sets.read_only]
+tools = [
+  "read_file", "web_search", "web_fetch",
+  "memory_search"
+]
+destructive_ops = false
+action_budget = 10
+
+[capability_sets.denied]
+tools = []
+destructive_ops = false
+action_budget = 0
