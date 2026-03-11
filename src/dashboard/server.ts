@@ -462,9 +462,16 @@ export class DashboardServer {
 
     // GET /api/project — project identity for multi-instance differentiation
     this._app.get('/api/project', (_req, res) => {
+      // Normalize: trim whitespace and enforce the same 40-char cap as the config loader.
+      // Using || (not ??) so empty strings and whitespace-only values fall through to the fallback.
+      const normalize = (v?: string): string | undefined => {
+        const trimmed = v?.trim();
+        return trimmed ? trimmed.slice(0, 40) : undefined;
+      };
+
       const projectName =
-        this._options.projectConfig?.name ??
-        this._options.agentName ??
+        normalize(this._options.projectConfig?.name) ??
+        normalize(this._options.agentName) ??
         'Zora';
 
       res.json({
