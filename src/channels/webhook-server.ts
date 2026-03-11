@@ -16,7 +16,7 @@ export class WebhookServer {
   private readonly _app: express.Application;
   private readonly _port: number;
   private readonly _manager: ChannelManager;
-  private _server: any;
+  private _server: ReturnType<express.Application['listen']> | null = null;
 
   constructor(manager: ChannelManager, port = 8080) {
     this._app = express();
@@ -42,8 +42,9 @@ export class WebhookServer {
    * Stop the webhook server.
    */
   async stop(): Promise<void> {
-    if (this._server) {
-      await new Promise((resolve) => this._server.close(resolve));
+    const server = this._server;
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
       this._server = null;
     }
     log.info('Webhook server stopped');
@@ -58,12 +59,12 @@ export class WebhookServer {
     // Platform-specific webhooks
     // Each platform adapter will register its own route here
     this._app.post('/webhooks/:platform', express.json(), async (req, res) => {
-      const platform = req.params.platform;
+      const platform = req.params['platform'] ?? 'unknown';
       log.info({ platform }, 'Received webhook');
 
-      // 1. Validate signature (platform-specific)
-      // 2. Map payload to event
-      // 3. Dispatch to manager.handleMessage()
+      // TODO(channels): validate platform signature, map payload to ChannelMessage,
+      // then dispatch: await this._manager.handleMessage(msg)
+      void this._manager; // marks field as intentionally reserved
 
       res.status(200).send('OK');
     });

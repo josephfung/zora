@@ -1,12 +1,14 @@
 /**
  * TelegramAdapter — Telegram implementation of IChannelAdapter.
  *
- * Uses @chat-adapter/telegram and Vercel Chat SDK for cross-platform messaging.
+ * Uses the Vercel Chat SDK (@chat-adapter/telegram) for cross-platform messaging.
+ * Wraps the Chat SDK's bot-oriented API into Zora's IChannelAdapter interface.
  */
 
-import { TelegramAdapter as ChatTelegramAdapter } from '@chat-adapter/telegram';
-import { ChannelIdentity, ChannelMessage } from '../../types/channel.js';
-import { IChannelAdapter, SendOptions } from '../channel-adapter.js';
+import { Chat, type Adapter } from 'chat';
+import { createTelegramAdapter, TelegramAdapter as ChatTelegramAdapter } from '@chat-adapter/telegram';
+import type { ChannelIdentity, ChannelMessage } from '../../types/channel.js';
+import type { IChannelAdapter, SendOptions } from '../channel-adapter.js';
 import { createLogger } from '../../utils/logger.js';
 
 const log = createLogger('telegram-adapter');
@@ -14,7 +16,8 @@ const log = createLogger('telegram-adapter');
 export class TelegramAdapter implements IChannelAdapter {
   readonly name = 'telegram';
   private readonly _botToken: string;
-  private _adapter: ChatTelegramAdapter | null = null;
+  private _bot: Chat<Record<string, Adapter>> | null = null;
+  private _rawAdapter: ChatTelegramAdapter | null = null;
   private _messageHandler: ((msg: ChannelMessage) => Promise<void>) | null = null;
 
   constructor(botToken: string) {
@@ -22,42 +25,48 @@ export class TelegramAdapter implements IChannelAdapter {
   }
 
   async start(): Promise<void> {
-    log.info('[telegram] Starting Telegram adapter...');
+    log.info('Starting Telegram adapter');
 
-    this._adapter = new ChatTelegramAdapter({
-      token: this._botToken,
+    this._rawAdapter = createTelegramAdapter({
+      botToken: this._botToken,
+      mode: 'polling',
     });
 
-    this._adapter.on('message', async (event) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    this._bot = new Chat({ adapters: { telegram: this._rawAdapter } } as any);
+
+    // Register handler for all new messages (pattern matches any text)
+    this._bot.onNewMessage(/[\s\S]*/u, async (thread, message) => {
       if (!this._messageHandler) return;
 
       const msg: ChannelMessage = {
-        id: event.id,
+        id: message.id,
         from: {
           type: 'telegram',
-          phoneNumber: event.userId, // Telegram ID as the unique identifier
-          displayName: event.username,
+          phoneNumber: message.author.userId ?? message.threadId,
+          displayName: message.author.fullName,
           isLinkedDevice: false,
         },
-        channelId: event.channelId || 'direct',
-        channelType: event.channelId ? 'group' : 'direct',
-        content: event.text || '',
-        timestamp: new Date(event.timestamp),
+        channelId: thread.isDM ? 'direct' : thread.id,
+        channelType: thread.isDM ? 'direct' : 'group',
+        content: message.text,
+        timestamp: new Date(),
       };
 
       await this._messageHandler(msg);
     });
 
-    await this._adapter.start();
-    log.info('[telegram] Telegram adapter ready');
+    await this._rawAdapter.startPolling();
+    log.info('Telegram adapter ready (polling)');
   }
 
   async stop(): Promise<void> {
-    if (this._adapter) {
-      await this._adapter.stop();
-      this._adapter = null;
+    if (this._rawAdapter) {
+      await this._rawAdapter.stopPolling();
+      this._rawAdapter = null;
     }
-    log.info('[telegram] Telegram adapter stopped');
+    this._bot = null;
+    log.info('Telegram adapter stopped');
   }
 
   onMessage(handler: (msg: ChannelMessage) => Promise<void>): void {
@@ -70,18 +79,20 @@ export class TelegramAdapter implements IChannelAdapter {
     content: string,
     options?: SendOptions
   ): Promise<void> {
-    if (!this._adapter) {
-      throw new Error('TelegramAdapter: cannot send message, adapter not started');
+    if (!this._rawAdapter) {
+      throw new Error('TelegramAdapter: cannot send, adapter not started');
     }
 
-    const recipient = channelId === 'direct' ? to.phoneNumber : channelId;
+    // threadId for DMs is the Telegram user/chat ID; for groups it's the channelId
+    const threadId = channelId === 'direct' ? to.phoneNumber : channelId;
 
-    await this._adapter.send({
-      channelId: recipient,
-      text: content,
-      replyTo: options?.quoteTimestamp?.toString(),
+    await this._rawAdapter.postMessage(threadId, {
+      markdown: content,
+      ...(options?.quoteTimestamp !== undefined && {
+        replyTo: String(options.quoteTimestamp),
+      }),
     });
 
-    log.info({ recipient, chars: content.length }, '[telegram] Response sent');
+    log.info({ threadId, chars: content.length }, 'Telegram response sent');
   }
 }
