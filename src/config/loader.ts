@@ -101,7 +101,10 @@ export function parseConfig(raw: Record<string, unknown>): ZoraConfig {
       log.warn({ color: config.project.color }, 'project.color must be a 6-digit hex color (e.g. #ff6b6b) — ignoring');
       config.project.color = undefined;
     }
-    if (config.project.name && config.project.name.length > 40) {
+    if (config.project.name != null && typeof config.project.name !== 'string') {
+      log.warn({ name: config.project.name }, 'project.name must be a string — ignoring');
+      config.project.name = undefined;
+    } else if (typeof config.project.name === 'string' && config.project.name.length > 40) {
       log.warn('project.name exceeds 40 characters — truncating');
       config.project.name = config.project.name.slice(0, 40);
     }
