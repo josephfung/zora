@@ -267,7 +267,7 @@ const App: React.FC = () => {
         const icon = data.icon ? `${data.icon} ` : '';
         document.title = `${icon}${data.name} — Zora`;
       })
-      .catch(() => {}); // Non-fatal, fall back to defaults
+      .catch(err => console.error('Failed to fetch project info:', err));
   }, []);
 
   // Hydrate chat history from stored sessions on first load

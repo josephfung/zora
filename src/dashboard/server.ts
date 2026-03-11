@@ -488,10 +488,7 @@ export class DashboardServer {
       const color = this._options.projectConfig?.color ?? '#ffb347';
       res.setHeader('Content-Type', 'image/svg+xml');
       res.send(
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">` +
-        `<rect width="32" height="32" rx="6" fill="${color}"/>` +
-        `<text x="16" y="22" text-anchor="middle" font-size="16" fill="#0a0b0f" font-family="monospace" font-weight="bold">Z</text>` +
-        `</svg>`
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="${color}"/><text x="16" y="22" text-anchor="middle" font-size="16" fill="#0a0b0f" font-family="monospace" font-weight="bold">Z</text></svg>`
       );
     });
 
