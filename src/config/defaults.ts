@@ -15,7 +15,15 @@ import type {
   NotificationsConfig,
   ProviderConfig,
   McpConfig,
+  ProjectConfig,
 } from '../types.js';
+
+export const DEFAULT_PROJECT: ProjectConfig = {
+  name: undefined,
+  description: undefined,
+  color: undefined,
+  icon: undefined,
+};
 
 export const DEFAULT_AGENT: AgentConfig = {
   name: 'zora-agent',
@@ -127,6 +135,7 @@ export const DEFAULT_CONFIG: ZoraConfig = {
   steering: DEFAULT_STEERING,
   notifications: DEFAULT_NOTIFICATIONS,
   mcp: DEFAULT_MCP,
+  project: DEFAULT_PROJECT,
 };
 
 /**

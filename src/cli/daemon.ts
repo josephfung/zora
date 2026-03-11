@@ -26,14 +26,17 @@ import type { TelegramConfig } from '../steering/telegram-gateway.js';
 // Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
 // needs to invoke claude as a provider subprocess.
 delete process.env['CLAUDECODE'];
+delete process.env['CLAUDE_CODE_ENTRYPOINT'];
+delete process.env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'];
 
 // Prevent EPIPE from crashing the process (e.g. broken pipe to signal-cli stdin/stdout).
 // Log and continue — the intake adapter's reconnect logic handles the actual recovery.
+// Note: log is not yet initialized here — use console to avoid silent crash.
 process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') {
-    log.warn({ err: err.message }, 'EPIPE — signal-cli pipe broken; reconnect will handle it');
+    console.warn('[daemon] EPIPE — signal-cli pipe broken; reconnect will handle it');
   } else {
-    log.error({ err }, 'Uncaught exception — shutting down');
+    console.error('[daemon] Uncaught exception:', err);
     process.exit(1);
   }
 });
@@ -114,6 +117,8 @@ async function main() {
     },
     port: config.steering.dashboard_port ?? 8070,
     host: process.env.ZORA_BIND_HOST,
+    projectConfig: config.project,
+    agentName: config.agent.name,
   });
   await dashboard.start();
 
