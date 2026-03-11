@@ -23,16 +23,17 @@ import { TelegramGateway } from '../steering/telegram-gateway.js';
 import type { TelegramConfig } from '../steering/telegram-gateway.js';
 
 // Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
-// Claude Code sets CLAUDECODE to prevent nesting; the Zora daemon legitimately needs it.
+// Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
+// needs to invoke claude as a provider subprocess.
 delete process.env['CLAUDECODE'];
 delete process.env['CLAUDE_CODE_ENTRYPOINT'];
 delete process.env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'];
 
-// Prevent EPIPE from crashing the process (broken pipe to signal-cli stdin/stdout).
-// The intake adapter's reconnect logic handles actual recovery.
+// Prevent EPIPE from crashing the process (e.g. broken pipe to signal-cli stdin/stdout).
+// Log and continue — the intake adapter's reconnect logic handles the actual recovery.
+// Note: log is not yet initialized here — use console to avoid silent crash.
 process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') {
-    // log not yet initialized here — use console to avoid silent crash
     console.warn('[daemon] EPIPE — signal-cli pipe broken; reconnect will handle it');
   } else {
     console.error('[daemon] Uncaught exception:', err);

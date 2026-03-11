@@ -23,14 +23,38 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { spawnSync, spawn } from 'node:child_process';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import fs from 'node:fs';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+const REPO_ROOT = path.resolve(fileURLToPath(import.meta.url), '../../..');
 const ZORA_CONFIG = path.join(os.homedir(), '.zora', 'config.toml');
 const SESSIONS_DIR = path.join(os.homedir(), '.zora', 'sessions');
-const BINARY = 'zora-agent';
+
+/**
+ * Resolves the CLI entrypoint to the repo-local built binary when available,
+ * falling back to the globally installed `zora-agent`.
+ * Returns [binary, prefixArgs] so callers can spread: spawn(bin, [...prefix, ...args])
+ */
+function resolveCliEntrypoint(): { bin: string; prefix: string[] } {
+  const localCli = path.join(REPO_ROOT, 'dist', 'cli', 'index.js');
+  if (fs.existsSync(localCli)) {
+    return { bin: process.execPath, prefix: [localCli] };
+  }
+  return { bin: 'zora-agent', prefix: [] };
+}
+
+const { bin: BINARY, prefix: BINARY_PREFIX } = resolveCliEntrypoint();
+
+function spawnCli(args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {
+  return spawnSync(BINARY, [...BINARY_PREFIX, ...args], opts as Parameters<typeof spawnSync>[2]);
+}
+
+function spawnCliAsync(args: string[], opts: Parameters<typeof spawn>[2] = {}) {
+  return spawn(BINARY, [...BINARY_PREFIX, ...args], opts as Parameters<typeof spawn>[2]);
+}
 
 function listSessionFiles(): string[] {
   try {
@@ -51,6 +75,7 @@ function parseJsonl(filePath: string): Record<string, unknown>[] {
 }
 
 function binaryExists(): boolean {
+  if (BINARY === process.execPath) return true; // local node entrypoint always available
   const result = spawnSync('which', [BINARY], { encoding: 'utf8' });
   return result.status === 0;
 }
@@ -73,27 +98,30 @@ function probeStartup(
     const stderrChunks: string[] = [];
     let resolved = false;
 
-    const child = spawn(BINARY, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnCliAsync(args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
 
     const done = () => {
       if (resolved) return;
       resolved = true;
       child.kill('SIGTERM');
       resolve({
-        started: stdoutChunks.length > 0,
+        // Started = any output on either stdout or stderr (startup logs may go to either)
+        started: stdoutChunks.length > 0 || stderrChunks.length > 0,
         stdout: stdoutChunks.join(''),
         stderr: stderrChunks.join(''),
       });
     };
 
-    child.stdout.on('data', (chunk: Buffer) => {
+    child.stdout!.on('data', (chunk: Buffer) => {
       stdoutChunks.push(chunk.toString());
       // Once we see orchestrator output, the binary is confirmed started.
       done();
     });
 
-    child.stderr.on('data', (chunk: Buffer) => {
+    child.stderr!.on('data', (chunk: Buffer) => {
       stderrChunks.push(chunk.toString());
+      // Startup details may be logged to stderr — also counts as started.
+      done();
     });
 
     child.on('error', () => done());
@@ -113,13 +141,13 @@ const runIntegration = process.env['ZORA_INTEGRATION'] === '1';
 
 describe('CLI smoke tests', () => {
   it.skipIf(!binExists)('--help exits 0 and shows usage', () => {
-    const result = spawnSync(BINARY, ['--help'], { encoding: 'utf8', timeout: 5_000 });
+    const result = spawnCli(['--help'], { encoding: 'utf8', timeout: 5_000 });
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/zora-agent/);
   });
 
   it.skipIf(!binExists)('--version exits 0 and prints semver', () => {
-    const result = spawnSync(BINARY, ['--version'], { encoding: 'utf8', timeout: 5_000 });
+    const result = spawnCli(['--version'], { encoding: 'utf8', timeout: 5_000 });
     expect(result.status).toBe(0);
     expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
   });
@@ -129,13 +157,13 @@ describe('CLI smoke tests', () => {
 
 describe.skipIf(!configExists || !binExists)('CLI config commands', () => {
   it('status exits 0 and lists providers', () => {
-    const result = spawnSync(BINARY, ['status'], { encoding: 'utf8', timeout: 10_000 });
+    const result = spawnCli(['status'], { encoding: 'utf8', timeout: 10_000 });
     expect(result.status, `stderr: ${result.stderr}`).toBe(0);
     expect(result.stdout).toMatch(/Providers:/);
   }, 15_000);
 
   it('doctor exits 0 and shows report', () => {
-    const result = spawnSync(BINARY, ['doctor'], { encoding: 'utf8', timeout: 10_000 });
+    const result = spawnCli(['doctor'], { encoding: 'utf8', timeout: 10_000 });
     expect(result.status, `stderr: ${result.stderr}`).toBe(0);
     expect(result.stdout).toMatch(/Zora Doctor Report/);
   }, 15_000);

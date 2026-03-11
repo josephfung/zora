@@ -596,6 +596,16 @@ export class DashboardServer {
         log.info({ host, port }, 'Zora Tactical Interface active');
         resolve();
       });
+      this._server.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          log.warn({ port }, `Dashboard port ${port} in use — continuing without dashboard UI`);
+          this._server = undefined;
+          resolve(); // Don't crash — Signal channel and other features still work
+        } else {
+          log.error({ err }, 'Dashboard server error');
+          resolve();
+        }
+      });
     });
   }
 
