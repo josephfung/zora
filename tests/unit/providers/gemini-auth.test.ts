@@ -122,7 +122,7 @@ describe('GeminiProvider checkAuth()', () => {
       mockSpawn('OK', 0);
       const provider = new GeminiProvider({ config: makeConfig() });
       await provider.checkAuth();
-      expect(spawn).toHaveBeenCalledWith('gemini', ['auth', 'status']);
+      expect(spawn).toHaveBeenCalledWith('gemini', ['auth', 'status'], expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'] }));
     });
 
     it('uses custom cli_path from config', async () => {
@@ -131,7 +131,7 @@ describe('GeminiProvider checkAuth()', () => {
         config: makeConfig({ cli_path: '/usr/local/bin/my-gemini' }),
       });
       await provider.checkAuth();
-      expect(spawn).toHaveBeenCalledWith('/usr/local/bin/my-gemini', ['auth', 'status']);
+      expect(spawn).toHaveBeenCalledWith('/usr/local/bin/my-gemini', ['auth', 'status'], expect.objectContaining({ stdio: ['ignore', 'pipe', 'pipe'] }));
     });
   });
 
