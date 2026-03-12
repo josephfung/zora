@@ -1,28 +1,46 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { TelegramAdapter } from '../../../src/channels/telegram/telegram-adapter.js';
-import type { ChannelIdentity, ChannelMessage } from '../../../src/types/channel.js';
+import { ChannelIdentity, ChannelMessage } from '../../../src/types/channel.js';
 
-const { mockRawAdapter } = vi.hoisted(() => ({
-  mockRawAdapter: {
-    startPolling: vi.fn().mockResolvedValue(undefined),
-    stopPolling: vi.fn().mockResolvedValue(undefined),
-    postMessage: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+// Capture the message handlers registered on the Chat instance
+let _newMessageHandler: ((thread: any, message: any) => Promise<void>) | null = null;
+let _subscribedMessageHandler: ((thread: any, message: any) => Promise<void>) | null = null;
 
-// Capture the onNewMessage handler registered by the adapter
-let capturedOnNewMessage: ((thread: any, message: any) => Promise<void>) | null = null;
+// Mock the Vercel chat SDK Chat class
+vi.mock('chat', () => {
+  return {
+    Chat: vi.fn().mockImplementation(() => ({
+      onNewMessage: vi.fn((_pattern: RegExp, handler: any) => {
+        _newMessageHandler = handler;
+      }),
+      onSubscribedMessage: vi.fn((handler: any) => {
+        _subscribedMessageHandler = handler;
+      }),
+      initialize: vi.fn().mockResolvedValue(undefined),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+    })),
+  };
+});
 
-vi.mock('@chat-adapter/telegram', () => ({
-  createTelegramAdapter: vi.fn().mockReturnValue(mockRawAdapter),
-}));
+const mockChatAdapter = {
+  startPolling: vi.fn().mockResolvedValue(undefined),
+  stopPolling: vi.fn().mockResolvedValue(undefined),
+  isDM: vi.fn().mockReturnValue(true),
+  openDM: vi.fn().mockResolvedValue('dm-thread-user-456'),
+  postMessage: vi.fn().mockResolvedValue(undefined),
+  postChannelMessage: vi.fn().mockResolvedValue(undefined),
+};
 
-vi.mock('chat', () => ({
-  Chat: vi.fn().mockImplementation(() => ({
-    onNewMessage: vi.fn().mockImplementation((_pattern: RegExp, handler: any) => {
-      capturedOnNewMessage = handler;
-    }),
-  })),
+// Mock @chat-adapter/telegram
+vi.mock('@chat-adapter/telegram', () => {
+  return {
+    TelegramAdapter: vi.fn().mockImplementation(() => mockChatAdapter),
+  };
+});
+
+// Mock the memory state adapter
+vi.mock('../../../src/channels/telegram/memory-state-adapter.js', () => ({
+  createMemoryState: vi.fn().mockReturnValue({}),
 }));
 
 describe('TelegramAdapter', () => {
@@ -30,76 +48,80 @@ describe('TelegramAdapter', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    capturedOnNewMessage = null;
+    _newMessageHandler = null;
+    _subscribedMessageHandler = null;
     adapter = new TelegramAdapter('fake-token');
   });
 
   it('initializes and starts polling', async () => {
     await adapter.start();
-    expect(mockRawAdapter.startPolling).toHaveBeenCalled();
+    expect(mockChatAdapter.startPolling).toHaveBeenCalled();
   });
 
-  it('maps incoming Chat SDK events to ChannelMessage', async () => {
+  it('maps incoming telegram messages to ChannelMessage', async () => {
     await adapter.start();
-    expect(capturedOnNewMessage).toBeDefined();
 
     let received: ChannelMessage | undefined;
-    adapter.onMessage(async (msg) => { received = msg; });
+    adapter.onMessage(async (msg) => {
+      received = msg;
+    });
 
-    const mockThread = { isDM: true, id: 'thread-123' };
+    // Simulate an incoming message via the chat SDK handler
+    const mockThread = { id: 'thread-user-456' };
     const mockMessage = {
-      id: 'msg-456',
-      threadId: 'thread-123',
+      id: 'tg-123',
       text: 'hello telegram',
-      author: { userId: 'user-789', fullName: 'Test User' },
+      author: {
+        userId: 'user-456',
+        fullName: 'Test User',
+        userName: 'testuser',
+      },
+      metadata: { dateSent: new Date('2025-01-01T00:00:00Z'), edited: false },
     };
 
-    await capturedOnNewMessage!(mockThread, mockMessage);
+    expect(_newMessageHandler).toBeDefined();
+    await _newMessageHandler!(mockThread, mockMessage);
 
     expect(received).toBeDefined();
-    expect(received?.id).toBe('msg-456');
-    expect(received?.from.phoneNumber).toBe('user-789');
+    expect(received?.id).toBe('tg-123');
+    expect(received?.from.phoneNumber).toBe('user-456');
     expect(received?.from.displayName).toBe('Test User');
     expect(received?.content).toBe('hello telegram');
-    expect(received?.channelId).toBe('direct');
     expect(received?.channelType).toBe('direct');
+    expect(received?.channelId).toBe('direct');
   });
 
-  it('sends a response back via postMessage (DM)', async () => {
+  it('sends a direct message via openDM + postMessage', async () => {
     await adapter.start();
     const to: ChannelIdentity = {
       type: 'telegram',
-      phoneNumber: 'user-789',
+      phoneNumber: 'user-456',
       isLinkedDevice: false,
     };
 
     await adapter.send(to, 'direct', 'hi there');
 
-    expect(mockRawAdapter.postMessage).toHaveBeenCalledWith(
-      'user-789',
-      expect.objectContaining({ markdown: 'hi there' })
-    );
+    expect(mockChatAdapter.openDM).toHaveBeenCalledWith('user-456');
+    expect(mockChatAdapter.postMessage).toHaveBeenCalledWith('dm-thread-user-456', 'hi there');
   });
 
-  it('sends to group channel ID when not a DM', async () => {
+  it('sends a group message via postChannelMessage', async () => {
     await adapter.start();
     const to: ChannelIdentity = {
       type: 'telegram',
-      phoneNumber: 'user-789',
+      phoneNumber: 'user-456',
       isLinkedDevice: false,
     };
 
-    await adapter.send(to, '-100123456789', 'group message');
+    await adapter.send(to, '-100123456789', 'hello group');
 
-    expect(mockRawAdapter.postMessage).toHaveBeenCalledWith(
-      '-100123456789',
-      expect.objectContaining({ markdown: 'group message' })
-    );
+    expect(mockChatAdapter.postChannelMessage).toHaveBeenCalledWith('-100123456789', 'hello group');
   });
 
-  it('stops polling on stop()', async () => {
+  it('stops polling and shuts down chat on stop()', async () => {
     await adapter.start();
     await adapter.stop();
-    expect(mockRawAdapter.stopPolling).toHaveBeenCalled();
+
+    expect(mockChatAdapter.stopPolling).toHaveBeenCalled();
   });
 });

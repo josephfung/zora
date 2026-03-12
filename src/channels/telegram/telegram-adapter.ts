@@ -1,72 +1,62 @@
 /**
  * TelegramAdapter — Telegram implementation of IChannelAdapter.
  *
- * Uses the Vercel Chat SDK (@chat-adapter/telegram) for cross-platform messaging.
- * Wraps the Chat SDK's bot-oriented API into Zora's IChannelAdapter interface.
+ * Uses @chat-adapter/telegram and the Vercel chat SDK (chat@4.19) for
+ * cross-platform messaging. The chat SDK manages polling, message routing,
+ * thread subscriptions, and locking. MemoryStateAdapter provides in-process
+ * state (suitable for polling mode; swap for Redis in multi-process deploys).
  */
 
-import { Chat, type Adapter } from 'chat';
-import { createTelegramAdapter, TelegramAdapter as ChatTelegramAdapter } from '@chat-adapter/telegram';
-import type { ChannelIdentity, ChannelMessage } from '../../types/channel.js';
-import type { IChannelAdapter, SendOptions } from '../channel-adapter.js';
+import { TelegramAdapter as ChatTelegramAdapter } from '@chat-adapter/telegram';
+import { Chat, type Thread, type Message } from 'chat';
+import { ChannelIdentity, ChannelMessage } from '../../types/channel.js';
+import { IChannelAdapter, SendOptions } from '../channel-adapter.js';
 import { createLogger } from '../../utils/logger.js';
+import { createMemoryState } from './memory-state-adapter.js';
 
 const log = createLogger('telegram-adapter');
 
 export class TelegramAdapter implements IChannelAdapter {
   readonly name = 'telegram';
-  private readonly _botToken: string;
-  private _bot: Chat<Record<string, Adapter>> | null = null;
-  private _rawAdapter: ChatTelegramAdapter | null = null;
+  private readonly _chatAdapter: ChatTelegramAdapter;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _chat: Chat<any> | null = null;
   private _messageHandler: ((msg: ChannelMessage) => Promise<void>) | null = null;
 
   constructor(botToken: string) {
-    this._botToken = botToken;
+    this._chatAdapter = new ChatTelegramAdapter({
+      botToken,
+      mode: 'polling',
+    });
   }
 
   async start(): Promise<void> {
-    log.info('Starting Telegram adapter');
+    log.info('[telegram] Starting Telegram adapter...');
 
-    this._rawAdapter = createTelegramAdapter({
-      botToken: this._botToken,
-      mode: 'polling',
+    this._chat = new Chat({
+      userName: 'zora',
+      adapters: { telegram: this._chatAdapter as any }, // eslint-disable-line @typescript-eslint/no-explicit-any
+      state: createMemoryState(),
+      logger: 'silent',
     });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    this._bot = new Chat({ adapters: { telegram: this._rawAdapter } } as any);
+    // Route all incoming messages (both new and subscribed threads) through Zora pipeline
+    this._chat.onNewMessage(/[\s\S]*/, this._handleChatMessage.bind(this));
+    this._chat.onSubscribedMessage(this._handleChatMessage.bind(this));
 
-    // Register handler for all new messages (pattern matches any text)
-    this._bot.onNewMessage(/[\s\S]*/u, async (thread, message) => {
-      if (!this._messageHandler) return;
+    await this._chat.initialize();
+    await this._chatAdapter.startPolling();
 
-      const msg: ChannelMessage = {
-        id: message.id,
-        from: {
-          type: 'telegram',
-          phoneNumber: message.author.userId ?? message.threadId,
-          displayName: message.author.fullName,
-          isLinkedDevice: false,
-        },
-        channelId: thread.isDM ? 'direct' : thread.id,
-        channelType: thread.isDM ? 'direct' : 'group',
-        content: message.text,
-        timestamp: new Date(),
-      };
-
-      await this._messageHandler(msg);
-    });
-
-    await this._rawAdapter.startPolling();
-    log.info('Telegram adapter ready (polling)');
+    log.info('[telegram] Telegram adapter ready (long-polling)');
   }
 
   async stop(): Promise<void> {
-    if (this._rawAdapter) {
-      await this._rawAdapter.stopPolling();
-      this._rawAdapter = null;
+    await this._chatAdapter.stopPolling();
+    if (this._chat) {
+      await this._chat.shutdown();
+      this._chat = null;
     }
-    this._bot = null;
-    log.info('Telegram adapter stopped');
+    log.info('[telegram] Telegram adapter stopped');
   }
 
   onMessage(handler: (msg: ChannelMessage) => Promise<void>): void {
@@ -77,22 +67,42 @@ export class TelegramAdapter implements IChannelAdapter {
     to: ChannelIdentity,
     channelId: string,
     content: string,
-    options?: SendOptions
+    _options?: SendOptions
   ): Promise<void> {
-    if (!this._rawAdapter) {
-      throw new Error('TelegramAdapter: cannot send, adapter not started');
+    if (channelId === 'direct') {
+      // For DMs: open a DM thread using the Telegram user ID stored in phoneNumber
+      const threadId = await this._chatAdapter.openDM(to.phoneNumber!);
+      await this._chatAdapter.postMessage(threadId, content);
+    } else {
+      // For group channels: use postChannelMessage
+      await this._chatAdapter.postChannelMessage(channelId, content);
     }
 
-    // threadId for DMs is the Telegram user/chat ID; for groups it's the channelId
-    const threadId = channelId === 'direct' ? to.phoneNumber : channelId;
+    log.info(
+      { recipient: channelId === 'direct' ? to.phoneNumber : channelId, chars: content.length },
+      '[telegram] Response sent'
+    );
+  }
 
-    await this._rawAdapter.postMessage(threadId, {
-      markdown: content,
-      ...(options?.quoteTimestamp !== undefined && {
-        replyTo: String(options.quoteTimestamp),
-      }),
-    });
+  private async _handleChatMessage(thread: Thread, message: Message): Promise<void> {
+    if (!this._messageHandler) return;
 
-    log.info({ threadId, chars: content.length }, 'Telegram response sent');
+    const isDM = this._chatAdapter.isDM(thread.id);
+
+    const msg: ChannelMessage = {
+      id: message.id,
+      from: {
+        type: 'telegram',
+        phoneNumber: message.author.userId,
+        displayName: message.author.fullName || message.author.userName,
+        isLinkedDevice: false,
+      },
+      channelId: isDM ? 'direct' : thread.id,
+      channelType: isDM ? 'direct' : 'group',
+      content: message.text,
+      timestamp: message.metadata.dateSent,
+    };
+
+    await this._messageHandler(msg);
   }
 }

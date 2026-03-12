@@ -16,7 +16,7 @@ export class WebhookServer {
   private readonly _app: express.Application;
   private readonly _port: number;
   private readonly _manager: ChannelManager;
-  private _server: ReturnType<express.Application['listen']> | null = null;
+  private _server: any;
 
   constructor(manager: ChannelManager, port = 8080) {
     this._app = express();
@@ -30,10 +30,14 @@ export class WebhookServer {
    * Start the webhook server.
    */
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this._server = this._app.listen(this._port, () => {
         log.info({ port: this._port }, 'Webhook server listening');
         resolve();
+      });
+      this._server.once('error', (err: Error) => {
+        log.error({ err, port: this._port }, 'Webhook server failed to bind');
+        reject(err);
       });
     });
   }
@@ -42,9 +46,11 @@ export class WebhookServer {
    * Stop the webhook server.
    */
   async stop(): Promise<void> {
-    const server = this._server;
-    if (server) {
-      await new Promise((resolve) => server.close(resolve));
+    if (this._server) {
+      await new Promise<void>((resolve) => this._server.close((err?: Error) => {
+        if (err) log.warn({ err }, 'Webhook server close error');
+        resolve();
+      }));
       this._server = null;
     }
     log.info('Webhook server stopped');
@@ -57,16 +63,27 @@ export class WebhookServer {
     });
 
     // Platform-specific webhooks
-    // Each platform adapter will register its own route here
+    // INVARIANT-10: Signature validation must be performed before dispatching.
     this._app.post('/webhooks/:platform', express.json(), async (req, res) => {
-      const platform = req.params['platform'] ?? 'unknown';
+      const platform = req.params.platform;
       log.info({ platform }, 'Received webhook');
 
-      // TODO(channels): validate platform signature, map payload to ChannelMessage,
-      // then dispatch: await this._manager.handleMessage(msg)
-      void this._manager; // marks field as intentionally reserved
+      // 1. Validate that the platform has a registered adapter
+      const adapter = this._manager.getAdapter(platform);
+      if (!adapter) {
+        log.warn({ platform }, 'Webhook received for unknown platform');
+        res.status(404).json({ error: 'Unknown platform' });
+        return;
+      }
 
-      res.status(200).send('OK');
+      // 2. Signature validation — INVARIANT-10 requires per-platform HMAC checks before
+      //    processing any webhook payload. Until per-platform validation is implemented,
+      //    reject all inbound webhook calls with 501 to prevent spoofed requests from
+      //    being treated as successful.
+      //    TODO: implement platform-specific HMAC signature validation, then replace
+      //    this block with the validated dispatch path.
+      log.warn({ platform }, 'Webhook endpoint not yet implemented — signature validation required');
+      res.status(501).json({ error: 'Webhook signature validation not yet implemented for this platform' });
     });
   }
 }
