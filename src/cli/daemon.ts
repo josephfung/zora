@@ -74,6 +74,7 @@ async function main() {
   const projectDir = process.env.ZORA_PROJECT_DIR ?? process.cwd();
 
   // Three-layer config resolution: defaults → global → project
+  // ZORA_CONFIG_DIR env var is read directly by resolveConfig (no need to pass explicitly)
   let config: ZoraConfig;
   let sources: string[];
   try {
