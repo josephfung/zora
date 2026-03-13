@@ -36,7 +36,9 @@ export class AgentCooldown {
   private readonly _reputationDir: string;
 
   constructor(private readonly _config: CooldownConfig) {
-    this._reputationDir = _config.reputationDir.replace('~', os.homedir());
+    this._reputationDir = _config.reputationDir.startsWith('~/')
+      ? path.join(os.homedir(), _config.reputationDir.slice(2))
+      : _config.reputationDir;
     if (!fs.existsSync(this._reputationDir)) {
       fs.mkdirSync(this._reputationDir, { recursive: true });
     }

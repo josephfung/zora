@@ -151,11 +151,8 @@ async function main() {
     } : {}),
   });
 
-  const providers = createProviders(config);
-  const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });
-  await orchestrator.boot();
-
-  // Initialize ApprovalQueue (reads config or uses defaults)
+  // Initialize ApprovalQueue BEFORE orchestrator boot so the send handler
+  // is in place if any actions arrive during the startup window.
   const approvalConfig = (config as unknown as Record<string, unknown>)['approval'] as Record<string, unknown> | undefined;
   const approvalQueue = new ApprovalQueue({
     ...DEFAULT_APPROVAL_CONFIG,
@@ -164,6 +161,10 @@ async function main() {
       timeoutMs: ((approvalConfig['timeout_s'] as number) ?? 300) * 1000,
     } : {}),
   });
+
+  const providers = createProviders(config);
+  const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });
+  await orchestrator.boot();
 
   // Start dashboard server
   const dashboard = new DashboardServer({
@@ -210,6 +211,7 @@ async function main() {
         telegramGateway = await TelegramGateway.create(
           fullTelegramConfig,
           orchestrator.steeringManager,
+          orchestrator.sessionManager,
         );
         log.info({ mode: telegramConfig.mode ?? 'polling' }, 'Telegram gateway started');
       } catch (err) {

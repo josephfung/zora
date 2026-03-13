@@ -109,15 +109,24 @@ export function mergeParentChild(
       denied: mergedDenied,
     },
     filesystem: {
-      allowedPaths: child.filesystem.allowedPaths.length > 0
-        ? child.filesystem.allowedPaths
-        : parent.filesystem.allowedPaths,
+      // Child can only restrict to a subset of parent's allowed paths — not widen.
+      // If parent has no allowedPaths (permissive), child's list is authoritative.
+      allowedPaths: parent.filesystem.allowedPaths.length > 0 && child.filesystem.allowedPaths.length > 0
+        ? child.filesystem.allowedPaths.filter(cp =>
+            parent.filesystem.allowedPaths.some(pp => cp === pp || cp.startsWith(pp + '/'))
+          )
+        : child.filesystem.allowedPaths.length > 0
+          ? child.filesystem.allowedPaths
+          : parent.filesystem.allowedPaths,
       deniedPaths: [...new Set([...parent.filesystem.deniedPaths, ...child.filesystem.deniedPaths])],
     },
     network: {
-      allowedDomains: child.network.allowedDomains.length > 0
-        ? child.network.allowedDomains
-        : parent.network.allowedDomains,
+      // Same restriction logic for network domains.
+      allowedDomains: parent.network.allowedDomains.length > 0 && child.network.allowedDomains.length > 0
+        ? child.network.allowedDomains.filter(cd => parent.network.allowedDomains.includes(cd))
+        : child.network.allowedDomains.length > 0
+          ? child.network.allowedDomains
+          : parent.network.allowedDomains,
     },
     actions: {
       maxIrreversibilityScore: Math.min(

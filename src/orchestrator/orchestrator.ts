@@ -39,6 +39,7 @@ import { AuditLogHook } from '../hooks/built-in/audit-log.js';
 import { RateLimitHook } from '../hooks/built-in/rate-limit.js';
 import { SecretRedactHook } from '../hooks/built-in/secret-redact.js';
 import { SensitiveFileGuardHook } from '../hooks/built-in/sensitive-file-guard.js';
+import { IrreversibilityScorerHook, DEFAULT_IRREVERSIBILITY_SCORES, DEFAULT_IRREVERSIBILITY_THRESHOLDS } from '../hooks/built-in/irreversibility-scorer.js';
 import { Router } from './router.js';
 import { FailoverController } from './failover-controller.js';
 import { RetryQueue } from './retry-queue.js';
@@ -433,6 +434,13 @@ export class Orchestrator {
       { tool: 'http_request', maxCalls: 100, windowMs: 60_000 },
     ]));
     this._toolHookRunner.register(SecretRedactHook);
+
+    // IrreversibilityScorerHook — registered after audit/rate-limit so those always run first.
+    // Uses scores/thresholds from policy.toml [actions.scores|thresholds] if present, else defaults.
+    this._toolHookRunner.register(new IrreversibilityScorerHook({
+      scores: this._policy.actions.scores ?? DEFAULT_IRREVERSIBILITY_SCORES,
+      thresholds: this._policy.actions.thresholds ?? DEFAULT_IRREVERSIBILITY_THRESHOLDS,
+    }));
 
     // Eagerly initialize TLCI so CostTracker is available immediately after boot()
     // (daemon.ts reads getTLCICostTracker() synchronously when constructing DashboardServer)

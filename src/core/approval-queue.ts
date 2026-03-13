@@ -7,6 +7,7 @@
  * for a reply. Auto-denies after configurable timeout.
  */
 
+import crypto from 'node:crypto';
 import { createLogger } from '../utils/logger.js';
 
 const log = createLogger('approval-queue');
@@ -16,8 +17,10 @@ export type ApprovalDecision = 'allow' | 'deny' | 'allow-30m' | 'allow-session';
 export interface ApprovalConfig {
   enabled: boolean;
   timeoutMs: number;          // default 300_000 (5 min)
-  retryAsApproval: boolean;   // repeated identical action = implicit allow
-  retryWindowMs: number;      // window for retry-as-approval (default 60_000)
+  retryAsApproval: boolean;   // reserved for future implementation
+  retryWindowMs: number;      // reserved for future implementation
+  /** Score ceiling for blanket-allow scopes (allow-30m / allow-session). Defaults to policy flag threshold. */
+  flagThreshold?: number;
 }
 
 export interface PendingApproval {
@@ -27,6 +30,7 @@ export interface PendingApproval {
   jobId: string;
   tool: string;
   resolve: (approved: boolean) => void;
+  timer: ReturnType<typeof setTimeout>;
   expiresAt: number;
   createdAt: number;
 }
@@ -36,8 +40,9 @@ export type ApprovalSendFn = (message: string) => Promise<void>;
 export class ApprovalQueue {
   private readonly _pending = new Map<string, PendingApproval>();
   private _sendFn: ApprovalSendFn | undefined;
-  private _blanketAllowUntil = 0;    // epoch ms; 0 = no blanket
-  private _blanketMaxScore = 0;      // max score covered by blanket
+  private _blanketAllowUntil = 0;         // epoch ms; 0 = no blanket; Number.MAX_SAFE_INTEGER = session
+  private _blanketMaxScore = 0;           // max score covered by blanket
+  private _blanketSessionScoped = false;  // true when allow-session set
 
   constructor(private readonly _config: ApprovalConfig) {}
 
@@ -61,8 +66,9 @@ export class ApprovalQueue {
     jobId: string;
     tool: string;
   }): Promise<boolean> {
-    // Check blanket allow window
-    if (Date.now() < this._blanketAllowUntil && opts.score < this._blanketMaxScore) {
+    // Check blanket allow window (session-scoped uses boolean to avoid Date(Infinity) crash)
+    const blanketActive = this._blanketSessionScoped || Date.now() < this._blanketAllowUntil;
+    if (blanketActive && opts.score < this._blanketMaxScore) {
       log.info({ tool: opts.tool, score: opts.score }, 'Action covered by blanket allow');
       return true;
     }
@@ -74,6 +80,17 @@ export class ApprovalQueue {
 
     return new Promise<boolean>((resolve) => {
       const id = this._generateToken();
+      // Timer stored on entry so handleReply can cancel it — prevents double-resolution
+      const timer = setTimeout(() => {
+        if (this._pending.has(id)) {
+          log.warn({ id, tool: opts.tool }, 'Approval request timed out — auto-denying');
+          this._pending.delete(id);
+          resolve(false);
+        }
+      }, this._config.timeoutMs);
+      // Allow GC/process exit — don't hold the event loop open just for a timeout
+      if (timer.unref) timer.unref();
+
       const entry: PendingApproval = {
         id,
         action: opts.action,
@@ -81,6 +98,7 @@ export class ApprovalQueue {
         jobId: opts.jobId,
         tool: opts.tool,
         resolve,
+        timer,
         expiresAt: Date.now() + this._config.timeoutMs,
         createdAt: Date.now(),
       };
@@ -88,15 +106,6 @@ export class ApprovalQueue {
       this._sendApprovalRequest(entry).catch(err => {
         log.error({ err }, 'Failed to send approval request');
       });
-
-      // Auto-deny on timeout
-      setTimeout(() => {
-        if (this._pending.has(id)) {
-          log.warn({ id, tool: opts.tool }, 'Approval request timed out — auto-denying');
-          this._pending.delete(id);
-          resolve(false);
-        }
-      }, this._config.timeoutMs);
     });
   }
 
@@ -110,18 +119,24 @@ export class ApprovalQueue {
       log.warn({ token }, 'Unknown or expired approval token');
       return false;
     }
+    // Cancel the timeout first to prevent double-resolution
+    clearTimeout(entry.timer);
     this._pending.delete(token);
 
+    // Blanket threshold: score must be below the configured flag threshold to qualify
+    const blanketMaxScore = this._config.flagThreshold ?? 80;
     switch (decision) {
-      case 'allow-30m':
+      case 'allow-30m': {
         this._blanketAllowUntil = Date.now() + 30 * 60 * 1000;
-        this._blanketMaxScore = 80;  // blanket covers score < 80
+        this._blanketMaxScore = blanketMaxScore;
+        this._blanketSessionScoped = false;
         log.info({ until: new Date(this._blanketAllowUntil).toISOString() }, 'Blanket allow (30m) set');
         break;
+      }
       case 'allow-session':
-        this._blanketAllowUntil = Infinity;
-        this._blanketMaxScore = 80;
-        log.warn('Blanket allow-session set — all actions score<80 will skip approval this session');
+        this._blanketSessionScoped = true;
+        this._blanketMaxScore = blanketMaxScore;
+        log.warn({ maxScore: blanketMaxScore }, 'Blanket allow-session set — all actions below threshold skip approval this session');
         break;
     }
 
@@ -174,11 +189,12 @@ export class ApprovalQueue {
 
   private _generateToken(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    // Use crypto.randomBytes for unpredictable tokens — these are one-time auth codes
+    const bytes = crypto.randomBytes(4);
     let token = 'ZORA-';
     for (let i = 0; i < 4; i++) {
-      token += chars[Math.floor(Math.random() * chars.length)];
+      token += chars[bytes[i]! % chars.length];
     }
-    // Ensure uniqueness
     if (this._pending.has(token)) {
       return this._generateToken();
     }

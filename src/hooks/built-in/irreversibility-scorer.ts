@@ -60,6 +60,17 @@ export class IrreversibilityScorerHook implements ToolHook {
     const actionKey = toolToAction(ctx.tool);
     const score = this._config.scores[actionKey] ?? 50;  // default 50 for unknown
 
+    // Check project policy score ceiling FIRST — it may be tighter than global thresholds.
+    // TODO: agentId not in ToolCallContext — using jobId as proxy until threaded through.
+    const agentPolicy = getAgentPolicy(ctx.jobId);
+    if (agentPolicy) {
+      const policyCheck = checkScoreLimit(score, agentPolicy);
+      if (!policyCheck.allowed) {
+        log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, policyCheck.reason);
+        return { allow: false, reason: `project_policy:${policyCheck.reason}` };
+      }
+    }
+
     if (score >= this._config.thresholds.auto_deny) {
       log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, 'Action auto-denied: max irreversibility');
       // Record denial in forecaster (score=100 to reflect maximum irreversibility toward commitment creep)
@@ -79,19 +90,6 @@ export class IrreversibilityScorerHook implements ToolHook {
     if (score >= this._config.thresholds.flag) {
       log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, 'Action flagged for approval');
       return { allow: false, reason: `approval_required:${score}` };
-    }
-
-    // Check project policy score limit for this job's agent.
-    // TODO: agentId is not directly available in ToolCallContext — using jobId as a proxy.
-    // A future improvement would thread agentId through ToolCallContext so registry lookups
-    // are precise when multiple agents share a process.
-    const agentPolicy = getAgentPolicy(ctx.jobId);
-    if (agentPolicy) {
-      const policyCheck = checkScoreLimit(score, agentPolicy);
-      if (!policyCheck.allowed) {
-        log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, policyCheck.reason);
-        return { allow: false, reason: `project_policy:${policyCheck.reason}` };
-      }
     }
 
     if (score >= this._config.thresholds.warn) {

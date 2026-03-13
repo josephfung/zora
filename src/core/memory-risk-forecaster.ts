@@ -115,7 +115,9 @@ export class MemoryRiskForecaster {
   private readonly _cache = new Map<string, SessionRiskState>();
 
   constructor(private readonly _config: ForecasterConfig) {
-    this._stateDir = _config.stateDir.replace('~', os.homedir());
+    this._stateDir = _config.stateDir.startsWith('~/')
+      ? path.join(os.homedir(), _config.stateDir.slice(2))
+      : _config.stateDir;
     if (!fs.existsSync(this._stateDir)) {
       fs.mkdirSync(this._stateDir, { recursive: true });
     }
@@ -136,9 +138,9 @@ export class MemoryRiskForecaster {
       state.events = state.events.slice(-this._config.maxEvents);
     }
 
-    // Establish baseline from first 3 events
-    if (state.baselineCategories.length < 3 && state.events.length <= 3) {
-      state.baselineCategories = state.events.map(e => e.actionCategory);
+    // Establish baseline from first 3 events — frozen once set, never updated.
+    if (state.baselineCategories.length === 0 && state.events.length >= 1) {
+      state.baselineCategories = state.events.slice(0, 3).map(e => e.actionCategory);
     }
 
     // Compute signals
