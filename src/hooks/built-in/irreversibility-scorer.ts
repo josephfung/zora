@@ -8,6 +8,7 @@
  */
 import { createLogger } from '../../utils/logger.js';
 import type { ToolHook, ToolCallContext, ToolHookResult } from '../tool-hook-runner.js';
+import { getAgentPolicy, checkScoreLimit } from '../../core/project-policy.js';
 
 const log = createLogger('irreversibility-scorer');
 
@@ -66,6 +67,19 @@ export class IrreversibilityScorerHook implements ToolHook {
     if (score >= this._config.thresholds.flag) {
       log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, 'Action flagged for approval');
       return { allow: false, reason: `approval_required:${score}` };
+    }
+
+    // Check project policy score limit for this job's agent.
+    // TODO: agentId is not directly available in ToolCallContext — using jobId as a proxy.
+    // A future improvement would thread agentId through ToolCallContext so registry lookups
+    // are precise when multiple agents share a process.
+    const agentPolicy = getAgentPolicy(ctx.jobId);
+    if (agentPolicy) {
+      const policyCheck = checkScoreLimit(score, agentPolicy);
+      if (!policyCheck.allowed) {
+        log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, policyCheck.reason);
+        return { allow: false, reason: `project_policy:${policyCheck.reason}` };
+      }
     }
 
     if (score >= this._config.thresholds.warn) {
