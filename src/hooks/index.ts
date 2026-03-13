@@ -10,3 +10,4 @@ export * from './built-in/audit-log.js';
 export * from './built-in/rate-limit.js';
 export * from './built-in/secret-redact.js';
 export * from './built-in/sensitive-file-guard.js';
+export * from './built-in/irreversibility-scorer.js';

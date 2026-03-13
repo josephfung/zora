@@ -647,6 +647,13 @@ export interface ActionsPolicy {
   reversible: string[];
   irreversible: string[];
   always_flag: string[];
+  // New: numeric scoring config (optional — uses defaults if not set)
+  scores?: Record<string, number>;
+  thresholds?: {
+    warn: number;
+    flag: number;
+    auto_deny: number;
+  };
 }
 
 export interface NetworkPolicy {
