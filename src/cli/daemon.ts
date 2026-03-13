@@ -23,6 +23,7 @@ import { TelegramGateway } from '../steering/telegram-gateway.js';
 import type { TelegramConfig } from '../steering/telegram-gateway.js';
 import { ApprovalQueue, DEFAULT_APPROVAL_CONFIG } from '../core/approval-queue.js';
 import { initGlobalCooldown, DEFAULT_COOLDOWN_CONFIG } from '../core/agent-cooldown.js';
+import { runSecurityAuditSilent } from './security-commands.js';
 
 // Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
 // Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
@@ -90,6 +91,38 @@ async function main() {
   // Determine baseDir: project .zora/ if it exists, else global
   const projectZora = path.join(projectDir, '.zora');
   const configDir = fs.existsSync(projectZora) ? projectZora : path.join(os.homedir(), '.zora');
+
+  // Security audit gate — block on FAILs unless explicitly skipped
+  const skipAudit = process.env['ZORA_SKIP_SECURITY_AUDIT'] === '1';
+  if (skipAudit) {
+    log.warn('Security audit skipped (ZORA_SKIP_SECURITY_AUDIT=1) — running with potentially unsafe configuration');
+  } else {
+    const { exitCode: auditExitCode, report: auditReport } = await runSecurityAuditSilent({ zoraDir: configDir });
+    const failItems = auditReport.checks.filter(c => c.severity === 'FAIL');
+    const warnItems = auditReport.checks.filter(c => c.severity === 'WARN');
+
+    if (warnItems.length > 0) {
+      for (const w of warnItems) {
+        const loc = w.location ? ` (${w.location})` : '';
+        log.warn({ checkId: w.id }, `Security WARN: ${w.message}${loc}`);
+      }
+    }
+
+    if (auditExitCode === 1) {
+      for (const f of failItems) {
+        const loc = f.location ? ` (${f.location})` : '';
+        log.fatal({ checkId: f.id }, `Security FAIL: ${f.message}${loc}`);
+      }
+      log.fatal(
+        { failCount: failItems.length },
+        'Daemon startup blocked: security audit found critical issues. ' +
+        'Fix them with `zora-agent security --fix` or set ZORA_SKIP_SECURITY_AUDIT=1 to bypass (unsafe).'
+      );
+      process.exit(1);
+    }
+
+    log.info({ passCount: auditReport.passCount, warnCount: auditReport.warnCount }, 'Security audit passed');
+  }
 
   // Initialize AgentCooldown singleton before orchestrator so subagent-tool can pick it up
   const cooldownConfig = (config as unknown as Record<string, unknown>)['cooldown'] as Record<string, unknown> | undefined;
