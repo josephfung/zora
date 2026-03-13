@@ -21,6 +21,7 @@ import type { ZoraPolicy, ZoraConfig, LLMProvider } from '../types.js';
 import { createLogger } from '../utils/logger.js';
 import { TelegramGateway } from '../steering/telegram-gateway.js';
 import type { TelegramConfig } from '../steering/telegram-gateway.js';
+import { ApprovalQueue, DEFAULT_APPROVAL_CONFIG } from '../core/approval-queue.js';
 
 // Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
 // Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
@@ -93,6 +94,16 @@ async function main() {
   const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });
   await orchestrator.boot();
 
+  // Initialize ApprovalQueue (reads config or uses defaults)
+  const approvalConfig = (config as unknown as Record<string, unknown>)['approval'] as Record<string, unknown> | undefined;
+  const approvalQueue = new ApprovalQueue({
+    ...DEFAULT_APPROVAL_CONFIG,
+    ...(approvalConfig ? {
+      enabled: (approvalConfig['enabled'] as boolean) ?? false,
+      timeoutMs: ((approvalConfig['timeout_s'] as number) ?? 300) * 1000,
+    } : {}),
+  });
+
   // Start dashboard server
   const dashboard = new DashboardServer({
     providers,
@@ -144,6 +155,12 @@ async function main() {
         log.error({ err }, 'Failed to start Telegram gateway');
       }
     }
+  }
+
+  // Wire ApprovalQueue to Telegram if approval is enabled and telegram is running
+  if (telegramGateway && approvalQueue.isEnabled()) {
+    telegramGateway.connectApprovalQueue(approvalQueue);
+    log.info('ApprovalQueue wired to Telegram gateway');
   }
 
   log.info('Zora daemon is running');
