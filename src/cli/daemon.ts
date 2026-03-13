@@ -23,6 +23,7 @@ import { TelegramGateway } from '../steering/telegram-gateway.js';
 import type { TelegramConfig } from '../steering/telegram-gateway.js';
 import { ApprovalQueue, DEFAULT_APPROVAL_CONFIG } from '../core/approval-queue.js';
 import { initGlobalCooldown, DEFAULT_COOLDOWN_CONFIG } from '../core/agent-cooldown.js';
+import { initGlobalForecaster, DEFAULT_FORECASTER_CONFIG } from '../core/memory-risk-forecaster.js';
 import { runSecurityAuditSilent } from './security-commands.js';
 
 // Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
@@ -135,6 +136,18 @@ async function main() {
       shutdownThreshold: (cooldownConfig['shutdown_threshold'] as number) ?? 10,
       resetAfterHours: (cooldownConfig['reset_after_hours'] as number) ?? 24,
       level1DelayMs: (cooldownConfig['level1_delay_ms'] as number) ?? 2000,
+    } : {}),
+  });
+
+  // Initialize MemoryRiskForecaster singleton before orchestrator
+  const forecasterConfig = (config as unknown as Record<string, unknown>)['risk_forecaster'] as Record<string, unknown> | undefined;
+  initGlobalForecaster({
+    ...DEFAULT_FORECASTER_CONFIG,
+    ...(forecasterConfig ? {
+      enabled: (forecasterConfig['enabled'] as boolean) ?? false,
+      interceptThreshold: (forecasterConfig['intercept_threshold'] as number) ?? 72,
+      autoDenyThreshold: (forecasterConfig['auto_deny_threshold'] as number) ?? 88,
+      maxEvents: (forecasterConfig['max_events'] as number) ?? 50,
     } : {}),
   });
 

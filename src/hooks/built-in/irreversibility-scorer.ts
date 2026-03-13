@@ -8,6 +8,7 @@
  */
 import { createLogger } from '../../utils/logger.js';
 import type { ToolHook, ToolCallContext, ToolHookResult } from '../tool-hook-runner.js';
+import { getGlobalForecaster } from '../../core/memory-risk-forecaster.js';
 
 const log = createLogger('irreversibility-scorer');
 
@@ -60,6 +61,17 @@ export class IrreversibilityScorerHook implements ToolHook {
 
     if (score >= this._config.thresholds.auto_deny) {
       log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, 'Action auto-denied: max irreversibility');
+      // Record denial in forecaster (score=100 to reflect maximum irreversibility toward commitment creep)
+      if (ctx.jobId) {
+        const forecaster = getGlobalForecaster();
+        forecaster?.record(ctx.jobId, {
+          timestamp: new Date().toISOString(),
+          sessionId: ctx.jobId,
+          tool: ctx.tool,
+          irreversibilityScore: 100,
+          jobId: ctx.jobId,
+        });
+      }
       return { allow: false, reason: `auto_denied:${score} — irreversibility score ${score}/100 exceeds auto-deny threshold` };
     }
 
@@ -72,6 +84,28 @@ export class IrreversibilityScorerHook implements ToolHook {
       log.warn({ tool: ctx.tool, score, jobId: ctx.jobId }, 'High-irreversibility action (allowed)');
     } else {
       log.debug({ tool: ctx.tool, score }, 'Irreversibility score');
+    }
+
+    // Record allowed action in MemoryRiskForecaster and check session-level risk
+    const forecaster = getGlobalForecaster();
+    if (forecaster && ctx.jobId) {
+      const riskScores = forecaster.record(ctx.jobId, {
+        timestamp: new Date().toISOString(),
+        sessionId: ctx.jobId,
+        tool: ctx.tool,
+        irreversibilityScore: score,
+        jobId: ctx.jobId,
+      });
+
+      if (forecaster.shouldAutoDeny(ctx.jobId)) {
+        log.error({ jobId: ctx.jobId, composite: riskScores.composite }, 'Session auto-denied: critical risk pattern detected');
+        return { allow: false, reason: `session_risk_critical:${riskScores.composite} — ${forecaster.getSummary(ctx.jobId)}` };
+      }
+
+      if (forecaster.shouldIntercept(ctx.jobId)) {
+        log.warn({ jobId: ctx.jobId, composite: riskScores.composite }, 'Session flagged: elevated risk pattern detected');
+        return { allow: false, reason: `approval_required:${riskScores.composite} (session risk — ${forecaster.getSummary(ctx.jobId)})` };
+      }
     }
 
     return { allow: true };
