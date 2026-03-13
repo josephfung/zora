@@ -19,8 +19,16 @@ import { GeminiProvider } from '../providers/gemini-provider.js';
 import { OllamaProvider } from '../providers/ollama-provider.js';
 import type { ZoraPolicy, ZoraConfig, LLMProvider } from '../types.js';
 import { createLogger } from '../utils/logger.js';
-import { TelegramGateway } from '../steering/telegram-gateway.js';
-import type { TelegramConfig } from '../steering/telegram-gateway.js';
+import { ChannelIdentityRegistry } from '../channels/channel-identity-registry.js';
+import { ChannelPolicyGate } from '../channels/channel-policy-gate.js';
+import { CapabilityResolver } from '../channels/capability-resolver.js';
+import { QuarantineProcessor } from '../channels/quarantine-processor.js';
+import { ChannelAuditLog } from '../channels/channel-audit-log.js';
+import { ChannelManager } from '../channels/channel-manager.js';
+import { SignalIntakeAdapter } from '../channels/signal/signal-intake-adapter.js';
+import { SignalAdapter } from '../channels/signal/signal-adapter.js';
+import { TelegramAdapter } from '../channels/telegram/telegram-adapter.js';
+import { AgentBusClient } from '../integrations/agentbus/agentbus-client.js';
 import { ApprovalQueue, DEFAULT_APPROVAL_CONFIG } from '../core/approval-queue.js';
 import { initGlobalCooldown, DEFAULT_COOLDOWN_CONFIG } from '../core/agent-cooldown.js';
 import { initGlobalForecaster, DEFAULT_FORECASTER_CONFIG } from '../core/memory-risk-forecaster.js';
@@ -30,14 +38,17 @@ import { runSecurityAuditSilent } from './security-commands.js';
 // Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
 // needs to invoke claude as a provider subprocess.
 delete process.env['CLAUDECODE'];
+delete process.env['CLAUDE_CODE_ENTRYPOINT'];
+delete process.env['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'];
 
 // Prevent EPIPE from crashing the process (e.g. broken pipe to signal-cli stdin/stdout).
 // Log and continue — the intake adapter's reconnect logic handles the actual recovery.
+// Note: log is not yet initialized here — use console to avoid silent crash.
 process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') {
-    log.warn({ err: err.message }, 'EPIPE — signal-cli pipe broken; reconnect will handle it');
+    console.warn('[daemon] EPIPE — signal-cli pipe broken; reconnect will handle it');
   } else {
-    log.error({ err }, 'Uncaught exception — shutting down');
+    console.error('[daemon] Uncaught exception:', err);
     process.exit(1);
   }
 });
@@ -64,10 +75,12 @@ function createProviders(config: ZoraConfig): LLMProvider[] {
 }
 
 async function main() {
-  // Resolve project directory from env (set by CLI start command) or cwd
-  const projectDir = process.env.ZORA_PROJECT_DIR ?? process.cwd();
+  // Resolve project directory from env (set by CLI start command) or cwd.
+  // path.resolve() normalizes relative paths (e.g. ZORA_PROJECT_DIR=".") to absolute.
+  const projectDir = path.resolve(process.env.ZORA_PROJECT_DIR ?? process.cwd());
 
   // Three-layer config resolution: defaults → global → project
+  // ZORA_CONFIG_DIR env var is read directly by resolveConfig (no need to pass explicitly)
   let config: ZoraConfig;
   let sources: string[];
   try {
@@ -166,6 +179,13 @@ async function main() {
   const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });
   await orchestrator.boot();
 
+  // Register with AgentBus (best-effort — failure doesn't block startup)
+  const agentBusClient = new AgentBusClient({
+    project: config.project?.name ?? config.agent.name,
+    folderPath: projectDir,
+  });
+  agentBusClient.register(); // non-blocking — failure never delays startup
+
   // Start dashboard server
   const dashboard = new DashboardServer({
     providers,
@@ -187,43 +207,71 @@ async function main() {
     },
     port: config.steering.dashboard_port ?? 8070,
     host: process.env.ZORA_BIND_HOST,
+    projectConfig: config.project,
+    agentName: config.agent.name,
   });
   await dashboard.start();
 
-  // Initialize Telegram gateway if enabled and configured
-  let telegramGateway: TelegramGateway | undefined;
-  const telegramConfig = config.steering.telegram;
-  if (telegramConfig?.enabled) {
-    const token = telegramConfig.bot_token || process.env.TELEGRAM_BOT_TOKEN;
-    if (!token) {
-      log.warn('Telegram enabled but no bot_token configured and TELEGRAM_BOT_TOKEN not set. Skipping.');
-    } else {
-      log.warn(
-        'Telegram: Ensure you are using a dedicated bot token for this Zora instance. ' +
-        'Sharing a bot token across multiple processes causes polling conflicts and lost messages.'
-      );
-      try {
-        const fullTelegramConfig: TelegramConfig = {
-          ...config.steering,
-          ...telegramConfig,
-          bot_token: token,
-        };
-        telegramGateway = await TelegramGateway.create(
-          fullTelegramConfig,
-          orchestrator.steeringManager,
-          orchestrator.sessionManager,
-        );
-        log.info({ mode: telegramConfig.mode ?? 'polling' }, 'Telegram gateway started');
-      } catch (err) {
-        log.error({ err }, 'Failed to start Telegram gateway');
-      }
-    }
-  }
+  // Multi-channel secure architecture (IChannelAdapter + ChannelManager + Quarantine)
+  let channelManager: ChannelManager | undefined;
 
-  // Wire ApprovalQueue to Telegram if approval is enabled and telegram is running
-  if (telegramGateway && approvalQueue.isEnabled()) {
-    telegramGateway.connectApprovalQueue(approvalQueue);
-    log.info('ApprovalQueue wired to Telegram gateway');
+  const channelPolicyPath = path.join(configDir, 'config', 'channel-policy.toml');
+  if (fs.existsSync(channelPolicyPath)) {
+    try {
+      const registry = await ChannelIdentityRegistry.load(channelPolicyPath);
+      registry.listenForReload();
+
+      const casbinModelPath = path.join(configDir, 'config', 'casbin', 'model.conf');
+      const gate = new ChannelPolicyGate(registry, casbinModelPath);
+      await gate.init();
+
+      const resolver = new CapabilityResolver(registry, gate);
+      const quarantine = new QuarantineProcessor(registry.getQuarantineModel());
+      const audit = new ChannelAuditLog(configDir);
+
+      channelManager = new ChannelManager(orchestrator, gate, resolver, quarantine, audit);
+
+      // 1. Signal
+      const signalConfig = registry.getSignalConfig();
+      const signalPhone = signalConfig?.phone_number ?? process.env['ZORA_SIGNAL_PHONE'];
+      if (signalPhone) {
+        const rawCliPath = signalConfig?.signal_cli_path;
+        const cliPath = rawCliPath ? rawCliPath.replace(/^~/, os.homedir()) : undefined;
+        const intake = new SignalIntakeAdapter(signalPhone, cliPath);
+        const signalAdapter = new SignalAdapter(intake);
+        await channelManager.registerAdapter(signalAdapter);
+      }
+
+      // 2. Telegram
+      let telegramRegistered = false;
+      const telegramConfig = config.steering.telegram;
+      if (telegramConfig?.enabled) {
+        const token = telegramConfig.bot_token || process.env.TELEGRAM_BOT_TOKEN;
+        if (token) {
+          const telegramAdapter = new TelegramAdapter(token);
+          await channelManager.registerAdapter(telegramAdapter);
+          telegramRegistered = true;
+        } else {
+          log.warn('Telegram enabled but no bot_token found. Skipping adapter.');
+        }
+      }
+
+      await channelManager.start();
+      const activeAdapters = [];
+      if (signalPhone) activeAdapters.push('signal');
+      if (telegramRegistered) activeAdapters.push('telegram');
+      log.info({ adapters: activeAdapters.join(', ') }, 'Multi-channel architecture online');
+
+      // TODO: wire ApprovalQueue to ChannelManager once the ChannelManager exposes
+      // a sendApprovalRequest() method (replaces old TelegramGateway.connectApprovalQueue).
+      if (approvalQueue.isEnabled()) {
+        log.info('ApprovalQueue enabled — Telegram wiring via ChannelManager is pending (TODO)');
+      }
+    } catch (err) {
+      log.error({ err }, 'Failed to initialize multi-channel architecture');
+    }
+  } else {
+    log.info('No channel-policy.toml found — multi-channel architecture disabled');
   }
 
   log.info('Zora daemon is running');
@@ -245,9 +293,10 @@ async function main() {
 
     const graceful = async () => {
       try {
-        if (telegramGateway) {
-          await telegramGateway.stop();
+        if (channelManager) {
+          await channelManager.stop();
         }
+        await agentBusClient.deregister();
         await dashboard.stop();
         await orchestrator.shutdown();
       } catch (err) {

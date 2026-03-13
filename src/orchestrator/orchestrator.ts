@@ -74,6 +74,7 @@ import type { WorkflowStep } from './step-classifier.js';
 import { runCodeToolStep } from './code-tool-runner.js';
 import { CostTracker } from '../dashboard/cost-tracker.js';
 import { createPlanWorkflowTool } from '../tools/planning-tool.js';
+import { createSpawnZoraTool } from './tools/spawn-zora-agent.js';
 import type { CapabilitySet, ChannelMessage } from '../types/channel.js';
 import { ChannelIdentityRegistry } from '../channels/channel-identity-registry.js';
 import { ChannelPolicyGate } from '../channels/channel-policy-gate.js';
@@ -108,7 +109,8 @@ export interface SubmitTaskOptions {
    */
   channelContext?: {
     capability: CapabilitySet;
-    channelMessage: ChannelMessage;
+    /** Raw channel message — kept for contextual logging only. INVARIANT-4: never passed to the privileged LLM prompt. */
+    channelMessage?: ChannelMessage;
   };
 }
 
@@ -1684,7 +1686,15 @@ export class Orchestrator {
       (opts) => this.submitTask({ prompt: opts.prompt }),
     );
 
-    return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools, planWorkflowTool, ...subagentTools];
+    // spawn_zora_agent — PM Zora uses this to launch project-scoped child instances
+    const pmConfig = (this._config as unknown as Record<string, unknown>)['pm'] as
+      | { projects?: Array<{ name: string; port: number; icon?: string; color?: string; project_dir: string }>; max_children?: number }
+      | undefined;
+    const spawnTools: CustomToolDefinition[] = pmConfig?.projects?.length
+      ? [createSpawnZoraTool({ projects: pmConfig.projects, maxChildren: pmConfig.max_children ?? 5 })]
+      : [];
+
+    return [...permissionTools, ...memoryTools, recallContextTool, ...skillTools, planWorkflowTool, ...subagentTools, ...spawnTools];
   }
 
   /**

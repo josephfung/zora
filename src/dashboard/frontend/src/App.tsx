@@ -50,6 +50,14 @@ type RightPanelTab = 'status' | 'templates' | 'security';
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
+function lightenHex(hex: string, amount: number): string {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  const lighten = (c: number) => Math.round(c + (255 - c) * amount);
+  return `#${lighten(r).toString(16).padStart(2, '0')}${lighten(g).toString(16).padStart(2, '0')}${lighten(b).toString(16).padStart(2, '0')}`;
+}
+
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -165,6 +173,12 @@ const MessageBubble: React.FC<{ msg: Message }> = ({ msg }) => {
 // ─── App ────────────────────────────────────────────────────────────
 
 const App: React.FC = () => {
+  const [projectInfo, setProjectInfo] = useState<{
+    name: string;
+    description: string | null;
+    color: string | null;
+    icon: string | null;
+  } | null>(null);
   const [providers, setProviders] = useState<ProviderStatus[]>([]);
   const [quotas, setQuotas] = useState<ProviderQuota[]>([]);
   const [steerMsg, setSteerMsg] = useState('');
@@ -235,6 +249,26 @@ const App: React.FC = () => {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Fetch project identity and apply color + title overrides
+  useEffect(() => {
+    fetch('/api/project', {
+      headers: _zoraToken ? { Authorization: `Bearer ${_zoraToken}` } : {},
+    })
+      .then(r => r.json())
+      .then((data: { name: string; description: string | null; color: string | null; icon: string | null }) => {
+        setProjectInfo(data);
+
+        if (data.color) {
+          document.documentElement.style.setProperty('--color-zora-gold', data.color);
+          document.documentElement.style.setProperty('--color-zora-teal', lightenHex(data.color, 0.15));
+        }
+
+        const icon = data.icon ? `${data.icon} ` : '';
+        document.title = `${icon}${data.name} — Zora`;
+      })
+      .catch(err => console.error('Failed to fetch project info:', err));
+  }, []);
 
   // Hydrate chat history from stored sessions on first load
   useEffect(() => {
@@ -440,7 +474,15 @@ const App: React.FC = () => {
       {/* Header Bar */}
       <div className="flex items-center gap-4 px-4 pt-4 pb-2">
         <div className="lcars-bar flex-1 bg-zora-gold">
-          ZORA {'/'} DASHBOARD
+          {projectInfo?.icon && (
+            <span className="mr-2 text-sm">{projectInfo.icon}</span>
+          )}
+          ZORA {'/'} {projectInfo?.name?.toUpperCase() ?? 'DASHBOARD'}
+          {projectInfo?.description && (
+            <span className="ml-3 text-xs opacity-60 font-data normal-case">
+              {projectInfo.description}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {providers.length > 0 && (

@@ -577,6 +577,17 @@ export interface HookConfigEntry {
   script?: string;
 }
 
+export interface ProjectConfig {
+  /** Short display name shown in the dashboard header (max 40 chars) */
+  name?: string;
+  /** Optional subtitle shown below the project name */
+  description?: string;
+  /** Hex color for primary LCARS chrome, e.g. "#ff6b6b" */
+  color?: string;
+  /** Optional emoji shown in browser tab + header, e.g. "🏦" */
+  icon?: string;
+}
+
 export interface ZoraConfig {
   agent: AgentConfig;
   providers: ProviderConfig[];
@@ -589,6 +600,8 @@ export interface ZoraConfig {
   mcp?: McpConfig;
   /** ORCH-12: Lifecycle hook definitions from [[hooks]] config sections */
   hooks?: HookConfigEntry[];
+  /** Per-project identity config — name, color, icon for multi-instance differentiation */
+  project?: ProjectConfig;
 }
 
 // ─── MCP Configuration ──────────────────────────────────────────────
