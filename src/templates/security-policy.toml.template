@@ -1,0 +1,42 @@
+# Zora Per-Project Security Policy
+# Place this file at .zora/security-policy.toml in your project directory
+# Parent policy (~/.zora/policy.toml) is always the ceiling.
+# This file can only ADD restrictions, never loosen them.
+
+[policy]
+# Set to true to start from parent policy, then apply restrictions
+inherit_from_parent = true
+
+[policy.tools]
+# Uncomment and populate to restrict to specific tools only (deny-by-default):
+# allowed = [
+#   "read_file", "write_file", "edit_file",
+#   "git_commit", "agentbus_send",
+# ]
+
+# Add tools to deny (merged with parent's denied list):
+denied = [
+  # "bash",
+  # "shell",
+  # "spawn_zora_agent",
+]
+
+[policy.filesystem]
+# Restrict filesystem access for this project's agent:
+# allowed_paths = ["~/Dev/MyProject", "~/.zora/projects/MyProject"]
+allowed_paths = []
+
+# Additional paths to deny (merged with global denied_paths):
+# denied_paths = ["~/.ssh", "~/.aws"]
+denied_paths = []
+
+[policy.network]
+# Restrict outbound domains (leave empty to use global policy):
+# allowed_domains = ["github.com", "api.anthropic.com"]
+allowed_domains = []
+
+[policy.actions]
+# Override the irreversibility score ceiling for this project.
+# Cannot be higher than the global policy's flag threshold.
+# Set lower to be more restrictive for sensitive projects.
+max_irreversibility_score = 100

@@ -5,11 +5,13 @@
  * and exposes a delegate_to_subagent tool for the LLM to use.
  */
 
+import path from 'node:path';
 import { loadSubagents } from '../skills/subagent-loader.js';
 import type { CustomToolDefinition } from '../orchestrator/execution-loop.js';
 import { createLogger } from '../utils/logger.js';
 import type { AgentCooldown } from '../core/agent-cooldown.js';
 import { getGlobalCooldown } from '../core/agent-cooldown.js';
+import { loadProjectPolicy, registerAgentPolicy } from '../core/project-policy.js';
 
 const log = createLogger('subagent-tool');
 
@@ -77,6 +79,15 @@ export function createSubagentTools(
             agentId: name,
           };
         }
+      }
+
+      // Load and register project policy for the subagent
+      try {
+        const subagentDir = path.join(process.cwd(), '.zora', 'subagents', name);
+        const subagentPolicy = await loadProjectPolicy(subagentDir);
+        registerAgentPolicy(name, subagentPolicy);
+      } catch {
+        // No policy file — default permissive policy is fine
       }
 
       const subagents = await loadSubagents();
