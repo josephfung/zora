@@ -21,6 +21,7 @@ import type { ZoraPolicy, ZoraConfig, LLMProvider } from '../types.js';
 import { createLogger } from '../utils/logger.js';
 import { TelegramGateway } from '../steering/telegram-gateway.js';
 import type { TelegramConfig } from '../steering/telegram-gateway.js';
+import { initGlobalCooldown, DEFAULT_COOLDOWN_CONFIG } from '../core/agent-cooldown.js';
 
 // Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
 // Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
@@ -88,6 +89,20 @@ async function main() {
   // Determine baseDir: project .zora/ if it exists, else global
   const projectZora = path.join(projectDir, '.zora');
   const configDir = fs.existsSync(projectZora) ? projectZora : path.join(os.homedir(), '.zora');
+
+  // Initialize AgentCooldown singleton before orchestrator so subagent-tool can pick it up
+  const cooldownConfig = (config as unknown as Record<string, unknown>)['cooldown'] as Record<string, unknown> | undefined;
+  initGlobalCooldown({
+    ...DEFAULT_COOLDOWN_CONFIG,
+    ...(cooldownConfig ? {
+      enabled: (cooldownConfig['enabled'] as boolean) ?? false,
+      level1Threshold: (cooldownConfig['level1_threshold'] as number) ?? 3,
+      level2Threshold: (cooldownConfig['level2_threshold'] as number) ?? 6,
+      shutdownThreshold: (cooldownConfig['shutdown_threshold'] as number) ?? 10,
+      resetAfterHours: (cooldownConfig['reset_after_hours'] as number) ?? 24,
+      level1DelayMs: (cooldownConfig['level1_delay_ms'] as number) ?? 2000,
+    } : {}),
+  });
 
   const providers = createProviders(config);
   const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });

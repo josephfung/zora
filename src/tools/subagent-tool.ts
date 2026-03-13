@@ -8,11 +8,14 @@
 import { loadSubagents } from '../skills/subagent-loader.js';
 import type { CustomToolDefinition } from '../orchestrator/execution-loop.js';
 import { createLogger } from '../utils/logger.js';
+import type { AgentCooldown } from '../core/agent-cooldown.js';
+import { getGlobalCooldown } from '../core/agent-cooldown.js';
 
 const log = createLogger('subagent-tool');
 
 export function createSubagentTools(
   submitTask: (opts: { prompt: string }) => Promise<string>,
+  cooldown?: AgentCooldown,
 ): CustomToolDefinition[] {
   const listSubagentsTool: CustomToolDefinition = {
     name: 'list_subagents',
@@ -61,6 +64,19 @@ export function createSubagentTools(
 
       if (!name || !task) {
         return { error: 'subagent_name and task are required' };
+      }
+
+      // Check cooldown before running — use explicit param or fall back to global singleton
+      const activeCooldown = cooldown ?? getGlobalCooldown();
+      if (activeCooldown) {
+        const check = await activeCooldown.checkAndEnforce(name);
+        if (!check.allowed) {
+          return {
+            error: 'AGENT_COOLDOWN_SHUTDOWN',
+            message: check.reason ?? `Agent "${name}" is in shutdown state due to repeated policy violations.`,
+            agentId: name,
+          };
+        }
       }
 
       const subagents = await loadSubagents();
