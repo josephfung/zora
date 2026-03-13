@@ -106,6 +106,63 @@ zora-agent audit --last 50    # last 50 actions
 
 **OWASP coverage:** Zora is hardened against the [OWASP LLM Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/) and [OWASP Agentic Top 10](https://owasp.org/www-project-agentic-ai-threats/) — prompt injection, tool-output injection, intent verification, action budgets, dry-run preview mode. See [SECURITY.md](SECURITY.md) for the technical breakdown.
 
+### 6. Runtime Safety Layer
+
+While policies define *what* Zora is allowed to do, the runtime safety layer adds a second tier that answers *how risky is this specific action right now* — and stops to ask when the answer is "too risky."
+
+**Irreversibility Scoring.** Every tool call is scored 0–100 before it executes. Writing a file: 20. A `git push` to origin: 70. Sending a Signal message: 80. Deleting a file: 95. Scores are configurable in `policy.toml`:
+
+```toml
+[actions.thresholds]
+warn      = 40   # log warning, allow
+flag      = 65   # pause and ask for approval
+auto_deny = 95   # block without asking
+```
+
+**Human-in-the-loop Approval.** When an action scores above the `flag` threshold, Zora pauses and sends you a Telegram message:
+
+```
+⚠️ Zora Action Approval Required
+Action: git_push (origin main)
+Risk: 70/100 (high)
+Token: ZORA-A8F2
+
+Reply: /approve ZORA-A8F2 allow | deny | allow-30m | allow-session
+```
+
+You can approve once, approve for 30 minutes, approve for the session, or deny. Auto-denies in 5 minutes if you don't reply.
+
+**Session Risk Forecasting.** Zora tracks three risk signals across a session — *drift* (has the agent veered from its original task?), *salami* (is it building toward something harmful in small steps?), and *commitment creep* (are actions getting progressively more irreversible?). When the composite score passes a threshold, the next action routes to the approval queue regardless of its individual score.
+
+**Agent Reputation.** When a spawned subagent repeatedly gets its actions blocked, it enters cooldown: throttled (2s delay), then restricted (all actions need explicit approval), then shut down. Resets after 24 hours of clean behavior.
+
+**Per-Project Security Scope.** You can give each subagent a tighter policy than the global one. A PM agent doesn't need shell access. A code-review agent doesn't need to send messages. Drop a `.zora/security-policy.toml` in your project and it inherits the global policy then applies additional restrictions — it can't loosen the global ceiling.
+
+```toml
+# .zora/security-policy.toml
+[policy.tools]
+denied = ["bash", "spawn_zora_agent"]
+
+[policy.actions]
+max_irreversibility_score = 60  # nothing above a git commit
+```
+
+**Startup Security Audit.** Every time the daemon starts, Zora scans its own configuration:
+
+```bash
+$ zora security
+✓ PASS  ~/.zora/ permissions (700)
+✓ PASS  config.toml permissions (600)
+✗ FAIL  Bot token found in plaintext in config.toml:44
+⚠ WARN  Node.js 18.x — upgrade to 20 LTS
+
+zora security --fix   # auto-fixes WARN issues
+```
+
+FAILs block daemon startup. WARNs log and continue. All opt-in via config — enable only what you need.
+
+For full configuration reference, see [Runtime Safety Layer](docs/advanced/security-runtime.md).
+
 ---
 
 ![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
@@ -259,6 +316,7 @@ Zora is in active development (v0.9.9). Core features work reliably today.
 | **[Setup Guide](SETUP_GUIDE.md)** | Complete walkthrough for first-time users |
 | **[What Is Zora?](WHAT_IS_ZORA.md)** | Plain-English explainer |
 | **[Security Guide](SECURITY.md)** | Full technical breakdown — PolicyEngine, OWASP, trust levels |
+| **[Runtime Safety Layer](docs/advanced/security-runtime.md)** | Irreversibility scoring, approval queue, risk forecaster, per-project policies |
 | **[FAQ](FAQ.md)** | Common questions |
 | **[Use Cases](USE_CASES.md)** | Real-world examples |
 | **[Routines Cookbook](ROUTINES_COOKBOOK.md)** | Scheduled task templates |
