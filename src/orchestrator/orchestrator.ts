@@ -89,6 +89,8 @@ export interface OrchestratorOptions {
   policy: ZoraPolicy;
   providers: LLMProvider[];
   baseDir?: string;
+  /** Skip channel adapters (Signal/Telegram). Use in one-shot `ask` mode. */
+  skipChannels?: boolean;
 }
 
 export interface SubmitTaskOptions {
@@ -118,6 +120,7 @@ export class Orchestrator {
   private readonly _config: ZoraConfig;
   private readonly _policy: ZoraPolicy;
   private readonly _baseDir: string;
+  private readonly _skipChannels: boolean;
   private readonly _providers: LLMProvider[];
 
   // Core components
@@ -191,6 +194,7 @@ export class Orchestrator {
     this._policy = options.policy;
     this._providers = options.providers;
     this._baseDir = options.baseDir ?? path.join(os.homedir(), '.zora');
+    this._skipChannels = options.skipChannels ?? false;
   }
 
   /**
@@ -448,8 +452,10 @@ export class Orchestrator {
     // (daemon.ts reads getTLCICostTracker() synchronously when constructing DashboardServer)
     await this._ensureTLCI();
 
-    // Signal channel — optional, only boots if config/channel-policy.toml exists
-    await this._bootSignalChannel();
+    // Signal channel — daemon-only. Skip in one-shot ask mode (skipChannels=true).
+    if (!this._skipChannels) {
+      await this._bootSignalChannel();
+    }
 
     this._booted = true;
   }

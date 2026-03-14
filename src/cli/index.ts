@@ -175,7 +175,7 @@ program
       process.exit(1);
     }
 
-    const orchestrator = new Orchestrator({ config, policy, providers });
+    const orchestrator = new Orchestrator({ config, policy, providers, skipChannels: true });
     await orchestrator.boot();
 
     let exitCode = 0;
