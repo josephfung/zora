@@ -288,7 +288,7 @@ Opens `http://localhost:8070` — watch tasks run in real time, check provider h
 
 ## Multi-Channel Messaging
 
-Zora can receive tasks and send responses over multiple messaging platforms. Powered by the **[Vercel AI SDK](https://sdk.vercel.ai/)**, which provides a growing ecosystem of channel adapters — new platforms require minimal code.
+Zora can receive tasks and send responses over multiple messaging platforms via a pluggable channel adapter architecture — new channels implement a single `IChannelAdapter` interface.
 
 | Channel | Status | Notes |
 |---------|--------|-------|
