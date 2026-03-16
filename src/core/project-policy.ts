@@ -64,6 +64,15 @@ export async function loadProjectPolicy(projectDir: string): Promise<ProjectSecu
   }
 }
 
+function asStringArray(val: unknown): string[] {
+  return Array.isArray(val) && val.every(v => typeof v === 'string') ? (val as string[]) : [];
+}
+
+function asScoreBounded(val: unknown): number {
+  const n = typeof val === 'number' ? val : 100;
+  return Math.max(0, Math.min(100, n));
+}
+
 /** Parse raw TOML into a ProjectSecurityPolicy */
 export function parseProjectPolicy(raw: Record<string, unknown>): ProjectSecurityPolicy {
   const polRaw = raw['policy'] as Record<string, unknown> | undefined;
@@ -72,20 +81,21 @@ export function parseProjectPolicy(raw: Record<string, unknown>): ProjectSecurit
   const netRaw = (polRaw?.['network'] ?? raw['network']) as Record<string, unknown> | undefined;
   const actRaw = (polRaw?.['actions'] ?? raw['actions']) as Record<string, unknown> | undefined;
 
+  const allowedRaw = toolsRaw?.['allowed'];
   return {
     tools: {
-      allowed: toolsRaw?.['allowed'] as string[] | undefined,
-      denied: (toolsRaw?.['denied'] as string[]) ?? [],
+      allowed: allowedRaw !== undefined ? asStringArray(allowedRaw) : undefined,
+      denied: asStringArray(toolsRaw?.['denied']),
     },
     filesystem: {
-      allowedPaths: (fsRaw?.['allowed_paths'] as string[]) ?? [],
-      deniedPaths: (fsRaw?.['denied_paths'] as string[]) ?? [],
+      allowedPaths: asStringArray(fsRaw?.['allowed_paths']),
+      deniedPaths: asStringArray(fsRaw?.['denied_paths']),
     },
     network: {
-      allowedDomains: (netRaw?.['allowed_domains'] as string[]) ?? [],
+      allowedDomains: asStringArray(netRaw?.['allowed_domains']),
     },
     actions: {
-      maxIrreversibilityScore: (actRaw?.['max_irreversibility_score'] as number) ?? 100,
+      maxIrreversibilityScore: asScoreBounded(actRaw?.['max_irreversibility_score']),
     },
   };
 }

@@ -140,7 +140,6 @@ export class SignalIntakeAdapter {
         log.error({ err }, '[signal] Reconnect failed');
       });
     }, delay);
-    this._retryTimeout.unref(); // don't hold the event loop open if nothing else is running
   }
 
   /** Handle raw signal-sdk message event */

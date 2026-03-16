@@ -265,7 +265,7 @@ async function main() {
       // TODO: wire ApprovalQueue to ChannelManager once the ChannelManager exposes
       // a sendApprovalRequest() method (replaces old TelegramGateway.connectApprovalQueue).
       if (approvalQueue.isEnabled()) {
-        log.info('ApprovalQueue enabled — Telegram wiring via ChannelManager is pending (TODO)');
+        log.warn('ApprovalQueue enabled but ChannelManager approval transport not yet implemented — approval gating disabled until wired');
       }
     } catch (err) {
       log.error({ err }, 'Failed to initialize multi-channel architecture');
