@@ -119,7 +119,16 @@ flag      = 65   # pause and ask for approval
 auto_deny = 95   # block without asking
 ```
 
-**Human-in-the-loop Approval.** When an action scores above the `flag` threshold, Zora pauses and sends you a Telegram message:
+**Human-in-the-loop Approval.** When an action scores above the `flag` threshold, Zora pauses and routes to an approval queue. Enable in `config.toml`:
+
+```toml
+[approval]
+enabled = true
+channel = "telegram"    # or "signal"
+timeout_s = 300         # auto-deny after 5 minutes
+```
+
+When triggered, you receive:
 
 ```
 ⚠️ Zora Action Approval Required
@@ -127,10 +136,10 @@ Action: git_push (origin main)
 Risk: 70/100 (high)
 Token: ZORA-A8F2
 
-Reply: /approve ZORA-A8F2 allow | deny | allow-30m | allow-session
+Reply: allow | deny | allow-30m | allow-session
 ```
 
-You can approve once, approve for 30 minutes, approve for the session, or deny. Auto-denies in 5 minutes if you don't reply.
+You can approve once, approve for 30 minutes, approve for the session, or deny. **Note:** Channel delivery (Telegram/Signal) requires a configured messaging adapter. See [Multi-Channel Messaging](#multi-channel-messaging).
 
 **Session Risk Forecasting.** Zora tracks three risk signals across a session — *drift* (has the agent veered from its original task?), *salami* (is it building toward something harmful in small steps?), and *commitment creep* (are actions getting progressively more irreversible?). When the composite score passes a threshold, the next action routes to the approval queue regardless of its individual score.
 
@@ -206,6 +215,12 @@ zora-agent init
 zora-agent ask "summarize files in ~/Projects"
 ```
 
+Or run as a persistent background daemon that watches for tasks:
+
+```bash
+zora-agent start    # starts daemon + dashboard at localhost:8070
+```
+
 > **Note:** The npm package may lag behind the latest release. To install from source: `git clone https://github.com/ryaker/zora && cd zora && npm install && npm link`
 
 **New to the terminal?** See the [step-by-step Setup Guide](SETUP_GUIDE.md).
@@ -251,7 +266,7 @@ Zora works with multiple AI providers and picks the best one for each task:
 |----------|----------|------|
 | **Claude** (primary) | Deep reasoning, coding, creative work | Your existing subscription |
 | **Gemini** (backup) | Large documents, search, structured data | Your existing account |
-| **Ollama** (optional) | Fully offline, complete privacy | Free |
+| **Ollama** (optional) | Fully offline or LAN-hosted, complete privacy | Free |
 
 If one provider is unavailable, Zora automatically fails over. You never manage this yourself.
 
@@ -324,8 +339,15 @@ Zora is in active development (v0.11.0). Core features work reliably today.
 |---------|--------|
 | Task execution via Claude and Gemini | ✅ Working |
 | Automatic failover between providers | ✅ Working |
+| Local/offline execution via Ollama | ✅ Working |
 | PolicyEngine (file-based, compaction-proof) | ✅ Working |
 | Action budgets + runaway loop prevention | ✅ Working |
+| Startup security audit (`zora security`) | ✅ Working |
+| Irreversibility scoring (0–100 per action) | ✅ Working |
+| Session risk forecasting (drift/salami/creep) | ✅ Working |
+| Agent reputation + cooldown system | ✅ Working |
+| Per-project security scope (`.zora/security-policy.toml`) | ✅ Working |
+| Human-in-the-loop approval queue | ✅ Working |
 | Tamper-proof audit log | ✅ Working |
 | Skill install with AST security scan | ✅ Working |
 | Skill audit (catches manually installed skills) | ✅ Working |
@@ -336,6 +358,7 @@ Zora is in active development (v0.11.0). Core features work reliably today.
 | Failed task retry with backoff | ✅ Working |
 | Signal messaging (E2E encrypted) | ✅ Working |
 | Telegram messaging (Vercel AI SDK) | ✅ Working |
+| One-shot scripting (`zora-agent ask`) | ✅ Working |
 | Cross-platform (macOS, Linux, Windows) | 🚧 macOS tested, others in progress |
 
 ---
