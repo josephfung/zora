@@ -29,6 +29,10 @@ import { SignalIntakeAdapter } from '../channels/signal/signal-intake-adapter.js
 import { SignalAdapter } from '../channels/signal/signal-adapter.js';
 import { TelegramAdapter } from '../channels/telegram/telegram-adapter.js';
 import { AgentBusClient } from '../integrations/agentbus/agentbus-client.js';
+import { ApprovalQueue, DEFAULT_APPROVAL_CONFIG } from '../core/approval-queue.js';
+import { initGlobalCooldown, DEFAULT_COOLDOWN_CONFIG } from '../core/agent-cooldown.js';
+import { initGlobalForecaster, DEFAULT_FORECASTER_CONFIG } from '../core/memory-risk-forecaster.js';
+import { runSecurityAuditSilent } from './security-commands.js';
 
 // Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
 // Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
@@ -101,6 +105,75 @@ async function main() {
   // Determine baseDir: project .zora/ if it exists, else global
   const projectZora = path.join(projectDir, '.zora');
   const configDir = fs.existsSync(projectZora) ? projectZora : path.join(os.homedir(), '.zora');
+
+  // Security audit gate — block on FAILs unless explicitly skipped
+  const skipAudit = process.env['ZORA_SKIP_SECURITY_AUDIT'] === '1';
+  if (skipAudit) {
+    log.warn('Security audit skipped (ZORA_SKIP_SECURITY_AUDIT=1) — running with potentially unsafe configuration');
+  } else {
+    const { exitCode: auditExitCode, report: auditReport } = await runSecurityAuditSilent({ zoraDir: configDir });
+    const failItems = auditReport.checks.filter(c => c.severity === 'FAIL');
+    const warnItems = auditReport.checks.filter(c => c.severity === 'WARN');
+
+    if (warnItems.length > 0) {
+      for (const w of warnItems) {
+        const loc = w.location ? ` (${w.location})` : '';
+        log.warn({ checkId: w.id }, `Security WARN: ${w.message}${loc}`);
+      }
+    }
+
+    if (auditExitCode === 1) {
+      for (const f of failItems) {
+        const loc = f.location ? ` (${f.location})` : '';
+        log.fatal({ checkId: f.id }, `Security FAIL: ${f.message}${loc}`);
+      }
+      log.fatal(
+        { failCount: failItems.length },
+        'Daemon startup blocked: security audit found critical issues. ' +
+        'Fix them with `zora-agent security --fix` or set ZORA_SKIP_SECURITY_AUDIT=1 to bypass (unsafe).'
+      );
+      process.exit(1);
+    }
+
+    log.info({ passCount: auditReport.passCount, warnCount: auditReport.warnCount }, 'Security audit passed');
+  }
+
+  // Initialize AgentCooldown singleton before orchestrator so subagent-tool can pick it up
+  const cooldownConfig = (config as unknown as Record<string, unknown>)['cooldown'] as Record<string, unknown> | undefined;
+  initGlobalCooldown({
+    ...DEFAULT_COOLDOWN_CONFIG,
+    ...(cooldownConfig ? {
+      enabled: (cooldownConfig['enabled'] as boolean) ?? false,
+      level1Threshold: (cooldownConfig['level1_threshold'] as number) ?? 3,
+      level2Threshold: (cooldownConfig['level2_threshold'] as number) ?? 6,
+      shutdownThreshold: (cooldownConfig['shutdown_threshold'] as number) ?? 10,
+      resetAfterHours: (cooldownConfig['reset_after_hours'] as number) ?? 24,
+      level1DelayMs: (cooldownConfig['level1_delay_ms'] as number) ?? 2000,
+    } : {}),
+  });
+
+  // Initialize MemoryRiskForecaster singleton before orchestrator
+  const forecasterConfig = (config as unknown as Record<string, unknown>)['risk_forecaster'] as Record<string, unknown> | undefined;
+  initGlobalForecaster({
+    ...DEFAULT_FORECASTER_CONFIG,
+    ...(forecasterConfig ? {
+      enabled: (forecasterConfig['enabled'] as boolean) ?? false,
+      interceptThreshold: (forecasterConfig['intercept_threshold'] as number) ?? 72,
+      autoDenyThreshold: (forecasterConfig['auto_deny_threshold'] as number) ?? 88,
+      maxEvents: (forecasterConfig['max_events'] as number) ?? 50,
+    } : {}),
+  });
+
+  // Initialize ApprovalQueue BEFORE orchestrator boot so the send handler
+  // is in place if any actions arrive during the startup window.
+  const approvalConfig = (config as unknown as Record<string, unknown>)['approval'] as Record<string, unknown> | undefined;
+  const approvalQueue = new ApprovalQueue({
+    ...DEFAULT_APPROVAL_CONFIG,
+    ...(approvalConfig ? {
+      enabled: (approvalConfig['enabled'] as boolean) ?? false,
+      timeoutMs: ((approvalConfig['timeout_s'] as number) ?? 300) * 1000,
+    } : {}),
+  });
 
   const providers = createProviders(config);
   const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });
@@ -188,6 +261,12 @@ async function main() {
       if (signalPhone) activeAdapters.push('signal');
       if (telegramRegistered) activeAdapters.push('telegram');
       log.info({ adapters: activeAdapters.join(', ') }, 'Multi-channel architecture online');
+
+      // TODO: wire ApprovalQueue to ChannelManager once the ChannelManager exposes
+      // a sendApprovalRequest() method (replaces old TelegramGateway.connectApprovalQueue).
+      if (approvalQueue.isEnabled()) {
+        log.warn('ApprovalQueue enabled but ChannelManager approval transport not yet implemented — approval gating disabled until wired');
+      }
     } catch (err) {
       log.error({ err }, 'Failed to initialize multi-channel architecture');
     }

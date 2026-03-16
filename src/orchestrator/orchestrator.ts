@@ -39,6 +39,7 @@ import { AuditLogHook } from '../hooks/built-in/audit-log.js';
 import { RateLimitHook } from '../hooks/built-in/rate-limit.js';
 import { SecretRedactHook } from '../hooks/built-in/secret-redact.js';
 import { SensitiveFileGuardHook } from '../hooks/built-in/sensitive-file-guard.js';
+import { IrreversibilityScorerHook, DEFAULT_IRREVERSIBILITY_SCORES, DEFAULT_IRREVERSIBILITY_THRESHOLDS } from '../hooks/built-in/irreversibility-scorer.js';
 import { Router } from './router.js';
 import { FailoverController } from './failover-controller.js';
 import { RetryQueue } from './retry-queue.js';
@@ -88,6 +89,8 @@ export interface OrchestratorOptions {
   policy: ZoraPolicy;
   providers: LLMProvider[];
   baseDir?: string;
+  /** Skip channel adapters (Signal/Telegram). Use in one-shot `ask` mode. */
+  skipChannels?: boolean;
 }
 
 export interface SubmitTaskOptions {
@@ -117,6 +120,7 @@ export class Orchestrator {
   private readonly _config: ZoraConfig;
   private readonly _policy: ZoraPolicy;
   private readonly _baseDir: string;
+  private readonly _skipChannels: boolean;
   private readonly _providers: LLMProvider[];
 
   // Core components
@@ -190,6 +194,7 @@ export class Orchestrator {
     this._policy = options.policy;
     this._providers = options.providers;
     this._baseDir = options.baseDir ?? path.join(os.homedir(), '.zora');
+    this._skipChannels = options.skipChannels ?? false;
   }
 
   /**
@@ -365,12 +370,15 @@ export class Orchestrator {
     scheduleRetryPoll();
 
     // R9: Start HeartbeatSystem and RoutineManager
+    // Use heartbeat_provider if set (typically a free/local Ollama) to keep
+    // background routine costs at zero. Falls back to rank-1 if not set.
     const defaultLoop = new ExecutionLoop({
       systemPrompt: 'You are Zora, a helpful autonomous agent.',
       permissionMode: 'default',
       cwd: process.cwd(),
       canUseTool: this._policyEngine.createCanUseTool(),
       customTools: this._createCustomTools(),
+      model: this._config.agent.heartbeat_provider,
     });
 
     this._heartbeatSystem = new HeartbeatSystem({
@@ -436,12 +444,21 @@ export class Orchestrator {
     ]));
     this._toolHookRunner.register(SecretRedactHook);
 
+    // IrreversibilityScorerHook — registered after audit/rate-limit so those always run first.
+    // Uses scores/thresholds from policy.toml [actions.scores|thresholds] if present, else defaults.
+    this._toolHookRunner.register(new IrreversibilityScorerHook({
+      scores: this._policy.actions.scores ?? DEFAULT_IRREVERSIBILITY_SCORES,
+      thresholds: this._policy.actions.thresholds ?? DEFAULT_IRREVERSIBILITY_THRESHOLDS,
+    }));
+
     // Eagerly initialize TLCI so CostTracker is available immediately after boot()
     // (daemon.ts reads getTLCICostTracker() synchronously when constructing DashboardServer)
     await this._ensureTLCI();
 
-    // Signal channel — optional, only boots if config/channel-policy.toml exists
-    await this._bootSignalChannel();
+    // Signal channel — daemon-only. Skip in one-shot ask mode (skipChannels=true).
+    if (!this._skipChannels) {
+      await this._bootSignalChannel();
+    }
 
     this._booted = true;
   }

@@ -12,6 +12,7 @@ import type { SteeringManager } from './steering-manager.js';
 import type { SessionManager } from '../orchestrator/session-manager.js';
 import type { SteeringConfig } from '../types.js';
 import { createLogger } from '../utils/logger.js';
+import type { ApprovalQueue } from '../core/approval-queue.js';
 
 const log = createLogger('telegram-gateway');
 
@@ -49,6 +50,8 @@ export class TelegramGateway {
   private readonly _sessionManager?: SessionManager;
   private readonly _allowedUsers: Set<string>;
   private readonly _projectDir: string;
+  private readonly _chatIds = new Map<string, number>(); // userId → chatId
+  private _approvalQueue: ApprovalQueue | undefined;
 
   private constructor(bot: TelegramBotType, steeringManager: SteeringManager, allowedUsers: string[], projectDir: string, sessionManager?: SessionManager) {
     this._bot = bot;
@@ -109,6 +112,9 @@ export class TelegramGateway {
         this._bot.sendMessage(msg.chat.id, '⛔ UNAUTHORIZED: Access Denied.');
         return;
       }
+
+      // Store chatId for proactive messages (approval requests)
+      this._chatIds.set(userId, msg.chat.id);
 
       const text = msg.text ?? '';
 
@@ -223,15 +229,53 @@ export class TelegramGateway {
     });
 
     /**
+     * /approve ZORA-XXXX allow|deny|allow-30m|allow-session
+     */
+    this._bot.onText(/\/approve\s+(.+)/, (msg, match) => {
+      const userId = msg.from?.id?.toString();
+      if (!userId || !this._allowedUsers.has(userId)) return;
+      if (!this._approvalQueue) return;
+
+      const text = `/approve ${match![1]!}`;
+      const parsed = this._approvalQueue.parseApprovalCommand(text);
+      if (!parsed) {
+        this._bot.sendMessage(msg.chat.id, '❌ Invalid approval command. Use: /approve ZORA-XXXX allow|deny|allow-30m|allow-session');
+        return;
+      }
+
+      const handled = this._approvalQueue.handleReply(parsed.token, parsed.decision);
+      if (handled) {
+        this._bot.sendMessage(msg.chat.id, `✅ Approval recorded: ${parsed.token} → ${parsed.decision}`);
+      } else {
+        this._bot.sendMessage(msg.chat.id, `⚠️ Token ${parsed.token} not found (already processed or expired)`);
+      }
+    });
+
+    /**
      * /help
      */
     this._bot.onText(/\/help/, (msg) => {
       const help = '🛰 **Zora Tactical Link**\n\n' +
                    '/steer <job_id> <message> — Inject course correction\n' +
                    '/status <job_id> — Check task progress\n' +
+                   '/approve <token> allow|deny|allow-30m|allow-session — Respond to approval request\n' +
                    '/help — Show this menu';
       this._bot.sendMessage(msg.chat.id, help, { parse_mode: 'Markdown' });
     });
+  }
+
+  /**
+   * Wire an ApprovalQueue to this gateway.
+   * Sets up a send handler that broadcasts approval requests to all known chatIds.
+   */
+  connectApprovalQueue(queue: ApprovalQueue): void {
+    this._approvalQueue = queue;
+    queue.setSendHandler(async (message: string) => {
+      for (const [, chatId] of this._chatIds) {
+        await this._bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+      }
+    });
+    log.info('ApprovalQueue connected to Telegram gateway');
   }
 
   /**

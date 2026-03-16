@@ -34,6 +34,7 @@ import { registerSubagentCommands } from './subagent-commands.js';
 import { registerHookCommands } from './hook-commands.js';
 import { registerInitCommand } from './init-command.js';
 import { registerSecretCommands } from './secret-commands.js';
+import { registerSecurityCommands } from './security-commands.js';
 import { runDoctorChecks } from './doctor.js';
 import { createLogger } from '../utils/logger.js';
 import { createRequire } from 'node:module';
@@ -174,7 +175,7 @@ program
       process.exit(1);
     }
 
-    const orchestrator = new Orchestrator({ config, policy, providers });
+    const orchestrator = new Orchestrator({ config, policy, providers, skipChannels: true });
     await orchestrator.boot();
 
     let exitCode = 0;
@@ -498,5 +499,6 @@ registerSubagentCommands(program);
 registerHookCommands(program, configDir);
 registerInitCommand(program);
 registerSecretCommands(program);
+registerSecurityCommands(program);
 
 program.parse();

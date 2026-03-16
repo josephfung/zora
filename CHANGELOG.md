@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1] — 2026-03-12
+
+### Documentation
+
+- Added **Runtime Safety Layer** section (section 6) to the README security architecture overview, covering irreversibility scoring, human-in-the-loop approval, session risk forecasting, agent reputation cooldown, per-project security scope, and startup security audit
+- New reference doc: `docs/advanced/security-runtime.md` — full configuration reference for the runtime safety layer, including the Prevent → Pause → Prove model, all TOML keys with descriptions, scoring table, Telegram approval setup, forecaster thresholds, agent cooldown levels, and troubleshooting guide
+- Updated Documentation table in README to cross-reference the new runtime safety doc
+
 ## [0.9.0] — 2026-02-14
 
 First release candidate. All 12 release gate criteria verified against source code. Zora boots, runs tasks, fails over between providers, persists sessions, and shuts down cleanly.

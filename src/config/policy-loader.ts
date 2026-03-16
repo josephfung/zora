@@ -55,6 +55,12 @@ export function parsePolicy(raw: Record<string, unknown>): ZoraPolicy {
       reversible: (actPol?.['reversible'] as string[]) ?? [],
       irreversible: (actPol?.['irreversible'] as string[]) ?? [],
       always_flag: (actPol?.['always_flag'] as string[]) ?? [],
+      scores: (actPol?.['scores'] as Record<string, number>) ?? undefined,
+      thresholds: actPol?.['thresholds'] ? {
+        warn: (actPol['thresholds'] as Record<string, number>)['warn'] ?? 40,
+        flag: (actPol['thresholds'] as Record<string, number>)['flag'] ?? 65,
+        auto_deny: (actPol['thresholds'] as Record<string, number>)['auto_deny'] ?? 95,
+      } : undefined,
     },
     network: {
       allowed_domains: (netPol?.['allowed_domains'] as string[]) ?? [],
