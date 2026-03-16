@@ -465,6 +465,8 @@ export interface AgentConfig {
   max_parallel_jobs: number;
   default_timeout: string;
   heartbeat_interval: string;
+  /** Provider name to use for heartbeat and background routine tasks. Defaults to rank-1. */
+  heartbeat_provider?: string;
   log_level: 'debug' | 'info' | 'warn' | 'error';
   identity: {
     soul_file: string;

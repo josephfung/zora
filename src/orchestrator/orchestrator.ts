@@ -370,12 +370,15 @@ export class Orchestrator {
     scheduleRetryPoll();
 
     // R9: Start HeartbeatSystem and RoutineManager
+    // Use heartbeat_provider if set (typically a free/local Ollama) to keep
+    // background routine costs at zero. Falls back to rank-1 if not set.
     const defaultLoop = new ExecutionLoop({
       systemPrompt: 'You are Zora, a helpful autonomous agent.',
       permissionMode: 'default',
       cwd: process.cwd(),
       canUseTool: this._policyEngine.createCanUseTool(),
       customTools: this._createCustomTools(),
+      model: this._config.agent.heartbeat_provider,
     });
 
     this._heartbeatSystem = new HeartbeatSystem({
