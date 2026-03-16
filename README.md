@@ -288,7 +288,7 @@ Opens `http://localhost:8070` — watch tasks run in real time, check provider h
 
 ## Multi-Channel Messaging
 
-Zora can receive tasks and send responses over multiple messaging platforms via a pluggable channel adapter architecture — new channels implement a single `IChannelAdapter` interface.
+Zora can receive tasks and send responses over multiple messaging platforms. Telegram uses the **[Vercel chat SDK](https://github.com/vercel/ai)** (`chat` + `@chat-adapter/telegram`) — a growing ecosystem of channel adapters where new platforms require minimal code.
 
 | Channel | Status | Notes |
 |---------|--------|-------|
