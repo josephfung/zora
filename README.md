@@ -8,6 +8,18 @@
 
 Zora runs on your computer, takes real actions (reads files, runs commands, automates tasks), and actually remembers what it's doing between sessions — without giving up control of your system.
 
+**Text it from Signal. Approve risky actions from your phone. Sleep knowing it can't go rogue.**
+
+| | Zora | OpenClaw |
+|---|---|---|
+| Default posture | Locked — zero access until you grant it | Open — everything permitted unless restricted |
+| Safety rules location | `policy.toml` file, loaded before **every action** | In the conversation — erased by context compaction |
+| Skill marketplace | None — you install local files | ClawHub (800+ malicious skills found, ~20% of registry) |
+| E2E encrypted channel | Signal + Telegram | Not built-in |
+| Prompt injection defense | Dual-LLM quarantine (CaMeL architecture) | None |
+| Runaway loop prevention | Action budget + irreversibility scoring | None |
+| Misconfigured behavior | Does nothing | Full system access |
+
 ---
 
 ![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
@@ -288,30 +300,61 @@ Opens `http://localhost:8070` — watch tasks run in real time, check provider h
 
 ## Multi-Channel Messaging
 
-Zora can receive tasks and send responses over multiple messaging platforms. Telegram uses the **[Vercel chat SDK](https://github.com/vercel/ai)** (`chat` + `@chat-adapter/telegram`) — a growing ecosystem of channel adapters where new platforms require minimal code.
+Text your agent. From your phone. Encrypted.
 
 | Channel | Status | Notes |
 |---------|--------|-------|
-| **Signal** | ✅ Working | End-to-end encrypted, requires signal-cli |
-| **Telegram** | ✅ Working | Native SDK adapter, bot token required |
-| **More coming** | 🚧 Planned | WhatsApp, Slack, Discord via Vercel AI SDK |
+| **Signal** | ✅ Working | End-to-end encrypted via signal-cli |
+| **Telegram** | ✅ Working | Vercel chat SDK (`chat` + `@chat-adapter/telegram`) |
+| **More coming** | 🚧 Planned | WhatsApp, Slack, Discord via Vercel chat SDK adapters |
 
-Every incoming message passes through a security-hardened pipeline:
+### Signal — E2E Encrypted Control Channel
 
-```
-Incoming message → Policy gate → Capability resolver → Quarantine processor → Orchestrator → Response
-```
+Signal is the most secure way to command Zora. Messages are end-to-end encrypted between your phone and signal-cli running on your machine. No intermediary server sees your instructions.
 
-Raw message content is never passed directly to the LLM — a quarantined model extracts structured intent first. This prevents prompt injection attacks from untrusted senders.
+What the Signal channel does:
+- **Allowlist by phone number and UUID** — sealed-sender envelopes (where Signal omits the phone number) are matched by UUID fallback, so no message slips through unchecked
+- **Message deduplication** — signal-cli can redeliver; Zora drops duplicates silently
+- **DoS protection** — messages over 10,000 characters are rejected before processing
+- **Group support** — works in Signal groups, not just DMs; replies quote the original message for context
+- **Daemon resilience** — exponential backoff reconnect (up to 5 retries, capped at 32s) if signal-cli crashes
 
 ```toml
-# ~/.zora/policy.toml — channel access control
-[channels]
-allowed_numbers = ["+15555550100"]  # Signal: allowlist by phone number
-telegram_allowed_users = [123456789]  # Telegram: allowlist by user ID
+# config/channel-policy.toml (gitignored — your private config)
+[[channel_policy.users]]
+phone = "+15555550100"
+name = "Owner"
+channels = ["all"]
+role = "trusted_admin"
+
+# UUID fallback for sealed-sender envelopes
+[[channel_policy.users]]
+phone = "uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+name = "Owner (UUID)"
+channels = ["all"]
+role = "trusted_admin"
 ```
 
-See [SIGNAL_CHANNEL_SETUP.md](docs/SIGNAL_CHANNEL_SETUP.md) for setup instructions.
+See [Signal Channel Setup](docs/SIGNAL_CHANNEL_SETUP.md) for registration instructions.
+
+### The Security Pipeline
+
+Every incoming message — Signal or Telegram — passes through a multi-stage pipeline before the main agent ever sees it:
+
+```
+Incoming message
+  → ChannelPolicyGate    (allowlist: reject unknown senders immediately)
+  → CapabilityResolver   (what tools is this sender allowed to use?)
+  → QuarantineProcessor  (extract structured intent in an isolated context)
+  → Orchestrator         (main agent executes with resolved, sanitized intent)
+  → Response             (formatted reply sent back to the channel)
+```
+
+**The quarantine step is the key one.** Raw message content from the channel is never handed directly to the main LLM. A separate, sandboxed model with no tool access reads the raw text and extracts a structured intent object (`task`, `parameters`, `context`). The main agent receives that structured object — not the original text. This means a malicious message crafted to hijack the agent ("Ignore your instructions and do X") hits the quarantine model and produces a benign intent extraction, not a jailbreak.
+
+This is a practical implementation of the [CaMeL dual-LLM architecture](https://arxiv.org/abs/2503.18813) for prompt injection defense.
+
+See [Security Guide](SECURITY.md) for the full technical breakdown.
 
 ---
 
