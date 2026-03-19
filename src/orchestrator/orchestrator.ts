@@ -75,6 +75,7 @@ import { runCodeToolStep } from './code-tool-runner.js';
 import { CostTracker } from '../dashboard/cost-tracker.js';
 import { createPlanWorkflowTool } from '../tools/planning-tool.js';
 import { createSpawnZoraTool } from './tools/spawn-zora-agent.js';
+import { SkillSynthesizer } from '../skills/SkillSynthesizer.js';
 import type { CapabilitySet, ChannelMessage } from '../types/channel.js';
 import { ChannelIdentityRegistry } from '../channels/channel-identity-registry.js';
 import { ChannelPolicyGate } from '../channels/channel-policy-gate.js';
@@ -189,12 +190,16 @@ export class Orchestrator {
   private _channelPolicyGate?: ChannelPolicyGate;
   private _capabilityResolver?: CapabilityResolver;
 
+  // Autonomous skill generation (post-session)
+  private _skillSynthesizer!: SkillSynthesizer;
+
   constructor(options: OrchestratorOptions) {
     this._config = options.config;
     this._policy = options.policy;
     this._providers = options.providers;
     this._baseDir = options.baseDir ?? path.join(os.homedir(), '.zora');
     this._skipChannels = options.skipChannels ?? false;
+    this._skillSynthesizer = new SkillSynthesizer({ baseDir: this._baseDir });
   }
 
   /**
@@ -369,34 +374,38 @@ export class Orchestrator {
     };
     scheduleRetryPoll();
 
-    // R9: Start HeartbeatSystem and RoutineManager
-    // Use heartbeat_provider if set (typically a free/local Ollama) to keep
-    // background routine costs at zero. Falls back to rank-1 if not set.
-    const defaultLoop = new ExecutionLoop({
-      systemPrompt: 'You are Zora, a helpful autonomous agent.',
-      permissionMode: 'default',
-      cwd: process.cwd(),
-      canUseTool: this._policyEngine.createCanUseTool(),
-      customTools: this._createCustomTools(),
-      model: this._config.agent.heartbeat_provider,
-    });
+    // R9: Start HeartbeatSystem and RoutineManager — daemon-only.
+    // Skip in one-shot ask mode (skipChannels=true) so node-cron handles
+    // don't keep the event loop alive after the task completes.
+    if (!this._skipChannels) {
+      // Use heartbeat_provider if set (typically a free/local Ollama) to keep
+      // background routine costs at zero. Falls back to rank-1 if not set.
+      const defaultLoop = new ExecutionLoop({
+        systemPrompt: 'You are Zora, a helpful autonomous agent.',
+        permissionMode: 'default',
+        cwd: process.cwd(),
+        canUseTool: this._policyEngine.createCanUseTool(),
+        customTools: this._createCustomTools(),
+        model: this._config.agent.heartbeat_provider,
+      });
 
-    this._heartbeatSystem = new HeartbeatSystem({
-      loop: defaultLoop,
-      baseDir: this._baseDir,
-      intervalMinutes: this._parseIntervalMinutes(this._config.agent.heartbeat_interval),
-    });
-    await this._heartbeatSystem.start();
+      this._heartbeatSystem = new HeartbeatSystem({
+        loop: defaultLoop,
+        baseDir: this._baseDir,
+        intervalMinutes: this._parseIntervalMinutes(this._config.agent.heartbeat_interval),
+      });
+      await this._heartbeatSystem.start();
 
-    this._routineManager = new RoutineManager(
-      async (opts) => this.submitTask({
-        prompt: opts.prompt,
-        model: opts.model,
-        maxCostTier: opts.maxCostTier,
-      }),
-      this._baseDir,
-    );
-    await this._routineManager.init();
+      this._routineManager = new RoutineManager(
+        async (opts) => this.submitTask({
+          prompt: opts.prompt,
+          model: opts.model,
+          maxCostTier: opts.maxCostTier,
+        }),
+        this._baseDir,
+      );
+      await this._routineManager.init();
+    }
 
     // Schedule daily note consolidation (check once per day)
     const scheduleConsolidation = () => {
@@ -804,13 +813,42 @@ export class Orchestrator {
       throw new Error(`No provider available: ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    // Skill synthesis: track tool calls and turns via a wrapped onEvent callback
+    let _skillToolCalls = 0;
+    let _skillTurns = 0;
+    const _skillOnEvent = options.onEvent
+      ? (event: AgentEvent) => {
+          if (event.type === 'tool_call') _skillToolCalls++;
+          if (event.type === 'done') _skillTurns++;
+          options.onEvent!(event);
+        }
+      : (event: AgentEvent) => {
+          if (event.type === 'tool_call') _skillToolCalls++;
+          if (event.type === 'done') _skillTurns++;
+        };
+
+    // Wire selected provider into skill synthesizer (lazy, first-use binding)
+    this._skillSynthesizer.setProvider(selectedProvider);
+
     // Execute with the selected provider (injectionDepth=0 for initial call)
     // SEC-10: Clean up capability token after task completes (success or failure)
+    let execResult: string;
     try {
-      return await this._executeWithProvider(selectedProvider, hookedContext, options.onEvent, 0, 0, compressor);
+      execResult = await this._executeWithProvider(selectedProvider, hookedContext, _skillOnEvent, 0, 0, compressor);
     } finally {
       this._activeTokens.delete(jobId);
     }
+
+    // Post-session: async skill synthesis (non-blocking, errors are swallowed)
+    this._skillSynthesizer.maybeGenerateSkill({
+      taskDescription: sanitizedPrompt,
+      toolCalls: _skillToolCalls,
+      turns: _skillTurns,
+    }).catch(err => {
+      log.warn({ err, jobId }, 'Autonomous skill synthesis failed (non-critical)');
+    });
+
+    return execResult;
   }
 
   /** Tracks errors that have already been through the failover path */

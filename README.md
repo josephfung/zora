@@ -372,6 +372,70 @@ See the [Routines Cookbook](ROUTINES_COOKBOOK.md) for templates.
 
 ---
 
+## Autonomous Skill Generation
+
+Zora can learn from complex sessions and save them as reusable **skills** — structured prompts that capture how to repeat a multi-step task without re-discovering every step.
+
+### How It Works
+
+After every `zora-agent ask` session, Zora checks whether the session was complex enough to be worth saving:
+
+- **Trigger threshold**: `tool_calls >= 8` OR `turns >= 8`
+- **Duplicate detection**: if a skill with strong semantic overlap already exists in `~/.zora/skills/`, synthesis is skipped
+- **HITL confirmation**: Zora prints the proposed `SKILL.md` and prompts `[SKILL] Save this skill? (y/N):` before writing anything
+
+When confirmed, the skill is saved at:
+
+```
+~/.zora/skills/<slug>/SKILL.md
+```
+
+### SKILL.md Format
+
+Each saved skill is a Markdown file with YAML frontmatter:
+
+```yaml
+---
+name: deploy-docker-container
+description: Deploy a Docker container image to a remote server via SSH
+platforms: [macos, linux]
+created: 2026-03-19T06:00:00.000Z
+tool_calls: 12
+turns: 9
+---
+## When to use
+Use when you need to build, push, and run a Docker image on a remote host.
+Useful for staging deployments and manual production rollouts.
+
+## Steps
+1. Build the image: `docker build -t <name> .`
+2. Push to registry: `docker push <registry>/<name>`
+3. SSH to host and pull: `docker pull <registry>/<name>`
+4. Restart the container: `docker compose up -d`
+
+## Pitfalls
+- Ensure the remote host has Docker and Docker Compose installed
+- Check that registry credentials are configured on the remote
+- Use `--no-cache` if the build picks up stale layers
+```
+
+### Integrity Manifest
+
+Every saved skill's SHA-256 hash is recorded in `~/.zora/skills/skills.lock.json`. This lets future runs verify that a skill file on disk has not been externally modified:
+
+```json
+{
+  "deploy-docker-container": "a3f5b2...",
+  "git-branch-workflow": "c9d1e7..."
+}
+```
+
+### Daemon Mode
+
+In daemon mode (Signal/Telegram channels), skill proposals are emitted as `skill:proposed` events and written only upon user confirmation through the normal channel conversation.
+
+---
+
 ![Divider](docs/archive/v5-spec/assets/lcars_divider.svg)
 
 ## Project Status
