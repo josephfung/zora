@@ -11,7 +11,7 @@ import type { CustomToolDefinition } from '../orchestrator/execution-loop.js';
 import { createLogger } from '../utils/logger.js';
 import type { AgentCooldown } from '../core/agent-cooldown.js';
 import { getGlobalCooldown } from '../core/agent-cooldown.js';
-import { loadProjectPolicy, registerAgentPolicy } from '../core/project-policy.js';
+import { loadProjectPolicy, registerAgentPolicy, clearAgentPolicy } from '../core/project-policy.js';
 
 const log = createLogger('subagent-tool');
 
@@ -118,6 +118,9 @@ export function createSubagentTools(
         const msg = err instanceof Error ? err.message : String(err);
         log.error({ subagent: name, err: msg }, 'Subagent delegation failed');
         return { error: `Subagent '${name}' failed: ${msg}` };
+      } finally {
+        // Always clear the registered agent policy to prevent stale entries
+        clearAgentPolicy(name);
       }
     },
   };

@@ -144,11 +144,16 @@ async function main() {
     ...DEFAULT_COOLDOWN_CONFIG,
     ...(cooldownConfig ? {
       enabled: (cooldownConfig['enabled'] as boolean) ?? false,
-      level1Threshold: (cooldownConfig['level1_threshold'] as number) ?? 3,
-      level2Threshold: (cooldownConfig['level2_threshold'] as number) ?? 6,
-      shutdownThreshold: (cooldownConfig['shutdown_threshold'] as number) ?? 10,
-      resetAfterHours: (cooldownConfig['reset_after_hours'] as number) ?? 24,
-      level1DelayMs: (cooldownConfig['level1_delay_ms'] as number) ?? 2000,
+      level1Threshold: (typeof cooldownConfig['level1_threshold'] === 'number' && Number.isFinite(cooldownConfig['level1_threshold']))
+        ? cooldownConfig['level1_threshold'] : 3,
+      level2Threshold: (typeof cooldownConfig['level2_threshold'] === 'number' && Number.isFinite(cooldownConfig['level2_threshold']))
+        ? cooldownConfig['level2_threshold'] : 6,
+      shutdownThreshold: (typeof cooldownConfig['shutdown_threshold'] === 'number' && Number.isFinite(cooldownConfig['shutdown_threshold']))
+        ? cooldownConfig['shutdown_threshold'] : 10,
+      resetAfterHours: (typeof cooldownConfig['reset_after_hours'] === 'number' && Number.isFinite(cooldownConfig['reset_after_hours']))
+        ? cooldownConfig['reset_after_hours'] : 24,
+      level1DelayMs: (typeof cooldownConfig['level1_delay_ms'] === 'number' && Number.isFinite(cooldownConfig['level1_delay_ms']))
+        ? cooldownConfig['level1_delay_ms'] : 2000,
     } : {}),
   });
 

@@ -819,12 +819,12 @@ export class Orchestrator {
     const _skillOnEvent = options.onEvent
       ? (event: AgentEvent) => {
           if (event.type === 'tool_call') _skillToolCalls++;
-          if (event.type === 'done') _skillTurns++;
+          if (event.type === 'turn.end') _skillTurns++;
           options.onEvent!(event);
         }
       : (event: AgentEvent) => {
           if (event.type === 'tool_call') _skillToolCalls++;
-          if (event.type === 'done') _skillTurns++;
+          if (event.type === 'turn.end') _skillTurns++;
         };
 
     // Wire selected provider into skill synthesizer (lazy, first-use binding)

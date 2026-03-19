@@ -111,7 +111,14 @@ export function mergeParentChild(
   child: ProjectSecurityPolicy,
 ): ProjectSecurityPolicy {
   const mergedDenied = [...new Set([...parent.tools.denied, ...child.tools.denied])];
-  const childAllowed = child.tools.allowed?.filter(t => !parent.tools.denied.includes(t));
+  // Child can only narrow the parent's allowlist, not widen it.
+  // If parent has an explicit allowlist, intersect with child's (if provided).
+  // If parent has no allowlist (permissive), child's list is authoritative.
+  const childAllowed = child.tools.allowed
+    ? (parent.tools.allowed
+        ? parent.tools.allowed.filter(t => child.tools.allowed!.includes(t) && !mergedDenied.includes(t))
+        : child.tools.allowed.filter(t => !mergedDenied.includes(t)))
+    : parent.tools.allowed?.filter(t => !mergedDenied.includes(t));
 
   return {
     tools: {

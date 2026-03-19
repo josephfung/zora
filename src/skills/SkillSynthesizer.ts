@@ -270,11 +270,17 @@ export class SkillSynthesizer {
    * HITL confirmation gate.
    *
    * In one-shot (ask) mode: print the proposed SKILL.md and prompt stdin.
-   * When skipConfirmation is true, or stdin is not a TTY: auto-confirm.
+   * When skipConfirmation is true: auto-confirm (tests/programmatic use).
+   * When stdin is not a TTY (daemon/background): fail closed — do NOT auto-approve.
+   * TODO: wire an out-of-band confirmer (e.g. via ApprovalQueue) for daemon runs.
    */
   private async _confirmWithUser(name: string, content: string): Promise<boolean> {
-    if (this._skipConfirmation || !process.stdin.isTTY) {
+    if (this._skipConfirmation) {
       return true;
+    }
+    if (!process.stdin.isTTY) {
+      // Daemon/non-interactive context — fail closed to preserve HITL guarantee.
+      return false;
     }
 
     console.log('\n─────────────────────────────────────────');

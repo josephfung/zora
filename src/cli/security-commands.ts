@@ -151,7 +151,7 @@ function checkFilePerm(filePath: string, expectedMode: number, fix: boolean): Ch
 }
 
 // Patterns that indicate a plaintext secret. Each pattern captures:
-//   group 1 = key name, group 2 = quote char, group 3 = value
+//   group 1 = key name, group 2 = value
 const SECRET_PATTERNS: RegExp[] = [
   /^\s*(bot_token|api_key|token|secret|password|auth_token|access_token)\s*=\s*["']([^"']{8,})["']/i,
   /^\s*(bot_token|api_key|token|secret|password|auth_token|access_token)\s*=\s*([^\s#"']{8,})/i,
@@ -188,7 +188,7 @@ function checkPlaintextSecrets(zoraDir: string): CheckResult[] {
           const envVar = keyName.toUpperCase();
           results.push({
             id: `SECRET-PLAINTEXT-${file.replace(/\./g, '-').toUpperCase()}-L${lineNum}`,
-            label: `No plaintext secrets in ${file}`,
+            label: `Plaintext secret in ${file}`,
             severity: 'FAIL',
             message: `Plaintext ${keyName} found — move to env var ${envVar}`,
             location: `${file}:${lineNum}`,
@@ -252,7 +252,7 @@ function checkDaemonBindAddress(zoraDir: string): CheckResult {
 
   // Also check ZORA_BIND_HOST env var at runtime — can only warn, not fix
   const bindHost = process.env['ZORA_BIND_HOST'];
-  if (bindHost && bindHost !== 'localhost' && bindHost !== '127.0.0.1') {
+  if (bindHost && bindHost !== 'localhost' && bindHost !== '127.0.0.1' && bindHost !== '::1') {
     return {
       id, label, severity: 'FAIL',
       message: `ZORA_BIND_HOST=${bindHost} — daemon will bind on a non-localhost address`,
