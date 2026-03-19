@@ -189,16 +189,19 @@ export class ApprovalQueue {
 
   private _generateToken(): string {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    // Use crypto.randomBytes for unpredictable tokens — these are one-time auth codes
-    const bytes = crypto.randomBytes(4);
-    let token = 'ZORA-';
-    for (let i = 0; i < 4; i++) {
-      token += chars[bytes[i]! % chars.length];
+    const maxAttempts = 10;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Use crypto.randomBytes for unpredictable tokens — these are one-time auth codes
+      const bytes = crypto.randomBytes(4);
+      let token = 'ZORA-';
+      for (let i = 0; i < 4; i++) {
+        token += chars[bytes[i]! % chars.length];
+      }
+      if (!this._pending.has(token)) {
+        return token;
+      }
     }
-    if (this._pending.has(token)) {
-      return this._generateToken();
-    }
-    return token;
+    throw new Error('Failed to generate unique approval token after 10 attempts');
   }
 }
 
