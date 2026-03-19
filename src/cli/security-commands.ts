@@ -160,7 +160,18 @@ const SECRET_PATTERNS: RegExp[] = [
 /** Scan .toml files in zoraDir for plaintext secrets. */
 function checkPlaintextSecrets(zoraDir: string): CheckResult[] {
   const results: CheckResult[] = [];
-  const tomlFiles = fs.readdirSync(zoraDir).filter((f: string) => f.endsWith('.toml'));
+  let tomlFiles: string[];
+  try {
+    tomlFiles = fs.readdirSync(zoraDir).filter((f: string) => f.endsWith('.toml'));
+  } catch {
+    return [{
+      id: 'SECRET-PLAINTEXT-READDIR',
+      label: 'No plaintext secrets in *.toml',
+      severity: 'FAIL',
+      message: `Cannot read ${zoraDir} to scan for plaintext secrets`,
+      fixable: false,
+    }];
+  }
 
   for (const file of tomlFiles) {
     const filePath = path.join(zoraDir, file);
@@ -324,7 +335,7 @@ function checkSignalPolicyFile(zoraDir: string): CheckResult {
     return { id, label, severity: 'PASS', message: 'Signal not configured — skipping policy file check', fixable: false };
   }
 
-  const policyFile = path.join(zoraDir, 'channel-policy.toml');
+  const policyFile = path.join(zoraDir, 'config', 'channel-policy.toml');
   if (fs.existsSync(policyFile)) {
     return { id, label, severity: 'PASS', message: 'Signal configured and channel-policy.toml is present', fixable: false };
   }
@@ -354,8 +365,14 @@ async function buildReport(opts: SecurityAuditOptions): Promise<AuditReport> {
   // 2. config.toml permissions
   checks.push(checkFilePerm(path.join(zoraDir, 'config.toml'), 0o600, fix));
 
-  // 3. policy.toml permissions
-  checks.push(checkFilePerm(path.join(zoraDir, 'policy.toml'), 0o600, fix));
+  // 3. policy.toml permissions (local zoraDir)
+  const localPolicyPath = path.join(zoraDir, 'policy.toml');
+  checks.push(checkFilePerm(localPolicyPath, 0o600, fix));
+  // Also audit global ~/.zora/policy.toml when zoraDir is a project directory
+  const globalPolicyPath = path.join(os.homedir(), '.zora', 'policy.toml');
+  if (path.resolve(globalPolicyPath) !== path.resolve(localPolicyPath)) {
+    checks.push(checkFilePerm(globalPolicyPath, 0o600, fix));
+  }
 
   // 4. Plaintext secrets in *.toml
   if (fs.existsSync(zoraDir)) {

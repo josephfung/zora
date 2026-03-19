@@ -152,7 +152,25 @@ export class AgentCooldown {
     }
     try {
       const raw = fs.readFileSync(filePath, 'utf-8');
-      return JSON.parse(raw) as AgentReputation;
+      const parsed: unknown = JSON.parse(raw);
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        typeof (parsed as Record<string, unknown>)['agentId'] === 'string' &&
+        typeof (parsed as Record<string, unknown>)['denialCount'] === 'number' &&
+        Number.isFinite((parsed as Record<string, unknown>)['denialCount']) &&
+        ((parsed as Record<string, unknown>)['level'] === 0 ||
+          (parsed as Record<string, unknown>)['level'] === 1 ||
+          (parsed as Record<string, unknown>)['level'] === 2) &&
+        ((parsed as Record<string, unknown>)['lastDenialAt'] === null ||
+          typeof (parsed as Record<string, unknown>)['lastDenialAt'] === 'string') &&
+        ((parsed as Record<string, unknown>)['lastResetAt'] === null ||
+          typeof (parsed as Record<string, unknown>)['lastResetAt'] === 'string') &&
+        typeof (parsed as Record<string, unknown>)['createdAt'] === 'string'
+      ) {
+        return parsed as AgentReputation;
+      }
+      return this._defaultReputation(agentId);
     } catch {
       return this._defaultReputation(agentId);
     }

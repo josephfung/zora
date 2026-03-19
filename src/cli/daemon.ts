@@ -158,9 +158,15 @@ async function main() {
     ...DEFAULT_FORECASTER_CONFIG,
     ...(forecasterConfig ? {
       enabled: (forecasterConfig['enabled'] as boolean) ?? false,
-      interceptThreshold: (forecasterConfig['intercept_threshold'] as number) ?? 72,
-      autoDenyThreshold: (forecasterConfig['auto_deny_threshold'] as number) ?? 88,
-      maxEvents: (forecasterConfig['max_events'] as number) ?? 50,
+      interceptThreshold: (typeof forecasterConfig['intercept_threshold'] === 'number' && Number.isFinite(forecasterConfig['intercept_threshold']))
+        ? forecasterConfig['intercept_threshold']
+        : 72,
+      autoDenyThreshold: (typeof forecasterConfig['auto_deny_threshold'] === 'number' && Number.isFinite(forecasterConfig['auto_deny_threshold']))
+        ? forecasterConfig['auto_deny_threshold']
+        : 88,
+      maxEvents: (typeof forecasterConfig['max_events'] === 'number' && Number.isFinite(forecasterConfig['max_events']))
+        ? forecasterConfig['max_events']
+        : 50,
     } : {}),
   });
 
