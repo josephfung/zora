@@ -168,7 +168,8 @@ export class SkillSynthesizer {
       }
       if (e.type === 'done') {
         const content = e.content as { text?: string };
-        if (content.text) accumulated = content.text;
+        // Only use done.content.text as fallback — don't overwrite streamed text
+        if (content.text && accumulated.length === 0) accumulated = content.text;
         break;
       }
     }
@@ -189,8 +190,8 @@ export class SkillSynthesizer {
     await fs.mkdir(skillDir, { recursive: true });
 
     const dest = path.join(skillDir, 'SKILL.md');
-    const tmp = `${dest}.tmp`;
-    await fs.writeFile(tmp, content, 'utf-8');
+    const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`;
+    await fs.writeFile(tmp, content, { encoding: 'utf-8', flag: 'wx' });
     await fs.rename(tmp, dest);
 
     await this.updateLockFile(name, content);

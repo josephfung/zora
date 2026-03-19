@@ -56,7 +56,7 @@ export class SkillsLock {
     const dir = path.dirname(this._lockPath);
     await fs.mkdir(dir, { recursive: true });
 
-    const tmp = `${this._lockPath}.tmp`;
+    const tmp = `${this._lockPath}.${process.pid}.${Date.now()}.${crypto.randomUUID()}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(data, null, 2) + '\n', 'utf-8');
     await fs.rename(tmp, this._lockPath);
   }
@@ -74,11 +74,23 @@ export class SkillsLock {
 
   /**
    * Update (or insert) the hash entry for a skill.
+   * Serializes per lock-file path to prevent concurrent read-modify-write races.
    */
   async update(name: string, content: string): Promise<void> {
-    const data = await this.load();
-    data[name] = hashContent(content);
-    await this.save(data);
+    const ctor = this.constructor as typeof SkillsLock & {
+      _writeQueues?: Map<string, Promise<void>>;
+    };
+    ctor._writeQueues ??= new Map<string, Promise<void>>();
+
+    const previous = ctor._writeQueues.get(this._lockPath) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const data = await this.load();
+      data[name] = hashContent(content);
+      await this.save(data);
+    });
+
+    ctor._writeQueues.set(this._lockPath, next.catch(() => {}));
+    await next;
   }
 }
 

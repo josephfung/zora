@@ -839,14 +839,16 @@ export class Orchestrator {
       this._activeTokens.delete(jobId);
     }
 
-    // Post-session: async skill synthesis (non-blocking, errors are swallowed)
-    this._skillSynthesizer.maybeGenerateSkill({
-      taskDescription: sanitizedPrompt,
-      toolCalls: _skillToolCalls,
-      turns: _skillTurns,
-    }).catch(err => {
+    // Post-session: await skill synthesis so CLI mode doesn't exit before confirmation/write
+    try {
+      await this._skillSynthesizer.maybeGenerateSkill({
+        taskDescription: sanitizedPrompt,
+        toolCalls: _skillToolCalls,
+        turns: _skillTurns,
+      });
+    } catch (err) {
       log.warn({ err, jobId }, 'Autonomous skill synthesis failed (non-critical)');
-    });
+    }
 
     return execResult;
   }
