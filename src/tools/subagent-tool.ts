@@ -11,7 +11,7 @@ import type { CustomToolDefinition } from '../orchestrator/execution-loop.js';
 import { createLogger } from '../utils/logger.js';
 import type { AgentCooldown } from '../core/agent-cooldown.js';
 import { getGlobalCooldown } from '../core/agent-cooldown.js';
-import { loadProjectPolicy, registerAgentPolicy, clearAgentPolicy } from '../core/project-policy.js';
+import { loadProjectPolicy, registerAgentPolicy, clearAgentPolicy, mergeParentChild } from '../core/project-policy.js';
 
 const log = createLogger('subagent-tool');
 
@@ -81,11 +81,17 @@ export function createSubagentTools(
         }
       }
 
-      // Load and register project policy for the subagent
+      // Load and register project policy for the subagent, merged with the parent policy
+      // so the subagent can only narrow (never widen) the parent's constraints.
       try {
+        const projectDir = path.join(process.cwd(), '.zora');
+        const parentPolicy = await loadProjectPolicy(projectDir).catch(() => null);
         const subagentDir = path.join(process.cwd(), '.zora', 'subagents', name);
         const subagentPolicy = await loadProjectPolicy(subagentDir);
-        registerAgentPolicy(name, subagentPolicy);
+        const effectivePolicy = parentPolicy
+          ? mergeParentChild(parentPolicy, subagentPolicy)
+          : subagentPolicy;
+        registerAgentPolicy(name, effectivePolicy);
       } catch {
         // No policy file — default permissive policy is fine
       }

@@ -199,7 +199,7 @@ function checkPlaintextSecrets(zoraDir: string): CheckResult[] {
       }
     }
 
-    if (!results.some(r => r.label === `No plaintext secrets in ${file}`)) {
+    if (!results.some(r => r.label === `Plaintext secret in ${file}`)) {
       results.push({
         id: `SECRET-PLAINTEXT-${file.replace(/\./g, '-').toUpperCase()}`,
         label: `No plaintext secrets in ${file}`,
@@ -283,7 +283,7 @@ function checkAgentBusUrl(zoraDir: string): CheckResult {
     const match = urlPattern.exec(line);
     if (match) {
       const url = match[1]!;
-      const isLocal = /^https?:\/\/(?:localhost|127\.0\.0\.1|::1)(:\d+)?/.test(url);
+      const isLocal = /^https?:\/\/(?:localhost|127\.0\.0\.1|::1|\[::1\])(:\d+)?/.test(url);
       if (!isLocal && url.startsWith('http://')) {
         return {
           id, label, severity: 'WARN',

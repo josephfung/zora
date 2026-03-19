@@ -130,7 +130,9 @@ export function mergeParentChild(
       // If parent has no allowedPaths (permissive), child's list is authoritative.
       allowedPaths: parent.filesystem.allowedPaths.length > 0 && child.filesystem.allowedPaths.length > 0
         ? child.filesystem.allowedPaths.filter(cp =>
-            parent.filesystem.allowedPaths.some(pp => cp === pp || cp.startsWith(pp + '/'))
+            parent.filesystem.allowedPaths.some(pp =>
+              pp === '/' || cp === pp || cp.startsWith(pp + '/')
+            )
           )
         : child.filesystem.allowedPaths.length > 0
           ? child.filesystem.allowedPaths
