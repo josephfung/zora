@@ -118,7 +118,10 @@ function checkZoraDirPermissions(zoraDir: string, fix: boolean): CheckResult {
 function checkFilePerm(filePath: string, expectedMode: number, fix: boolean): CheckResult {
   const rel = path.basename(filePath);
   const modeStr = expectedMode.toString(8);
-  const id = `PERM-${rel.replace(/\./g, '-').toUpperCase()}`;
+  // Include a sanitized parent-directory fragment to keep IDs unique when the same
+  // filename appears under different directories (e.g. project vs global policy.toml).
+  const parentFrag = path.basename(path.dirname(filePath)).replace(/[^a-zA-Z0-9]/g, '-').toUpperCase();
+  const id = `PERM-${parentFrag}-${rel.replace(/\./g, '-').toUpperCase()}`;
   const label = `${rel} permissions (${modeStr})`;
 
   if (!fs.existsSync(filePath)) {
@@ -157,12 +160,32 @@ const SECRET_PATTERNS: RegExp[] = [
   /^\s*(bot_token|api_key|token|secret|password|auth_token|access_token)\s*=\s*([^\s#"']{8,})/i,
 ];
 
-/** Scan .toml files in zoraDir for plaintext secrets. */
+/** Recursively collect all .toml file paths under a directory. */
+function collectTomlFiles(dir: string): string[] {
+  const results: string[] = [];
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return results;
+  }
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectTomlFiles(fullPath));
+    } else if (entry.isFile() && entry.name.endsWith('.toml')) {
+      results.push(fullPath);
+    }
+  }
+  return results;
+}
+
+/** Scan .toml files in zoraDir (recursively) for plaintext secrets. */
 function checkPlaintextSecrets(zoraDir: string): CheckResult[] {
   const results: CheckResult[] = [];
   let tomlFiles: string[];
   try {
-    tomlFiles = fs.readdirSync(zoraDir).filter((f: string) => f.endsWith('.toml'));
+    tomlFiles = collectTomlFiles(zoraDir);
   } catch {
     return [{
       id: 'SECRET-PLAINTEXT-READDIR',
@@ -173,8 +196,8 @@ function checkPlaintextSecrets(zoraDir: string): CheckResult[] {
     }];
   }
 
-  for (const file of tomlFiles) {
-    const filePath = path.join(zoraDir, file);
+  for (const filePath of tomlFiles) {
+    const file = path.relative(zoraDir, filePath);
     const content = readFileSafe(filePath);
     const lines = content.split('\n');
 
@@ -187,7 +210,7 @@ function checkPlaintextSecrets(zoraDir: string): CheckResult[] {
           const lineNum = i + 1;
           const envVar = keyName.toUpperCase();
           results.push({
-            id: `SECRET-PLAINTEXT-${file.replace(/\./g, '-').toUpperCase()}-L${lineNum}`,
+            id: `SECRET-PLAINTEXT-${file.replace(/[\./\\]/g, '-').toUpperCase()}-L${lineNum}`,
             label: `Plaintext secret in ${file}`,
             severity: 'FAIL',
             message: `Plaintext ${keyName} found — move to env var ${envVar}`,
@@ -201,7 +224,7 @@ function checkPlaintextSecrets(zoraDir: string): CheckResult[] {
 
     if (!results.some(r => r.label === `Plaintext secret in ${file}`)) {
       results.push({
-        id: `SECRET-PLAINTEXT-${file.replace(/\./g, '-').toUpperCase()}`,
+        id: `SECRET-PLAINTEXT-${file.replace(/[\./\\]/g, '-').toUpperCase()}`,
         label: `No plaintext secrets in ${file}`,
         severity: 'PASS',
         message: `No plaintext secrets detected in ${file}`,
