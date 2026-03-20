@@ -1812,9 +1812,10 @@ export class Orchestrator {
           if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Command denied by capability token' };
         }
       }
-      // Inject jobId so PolicyEngine.createCanUseTool() can forward the real
-      // jobId to ApprovalQueue.request() for auditing. Without this the queue
-      // always receives jobId='unknown'.
+      // Inject __jobId for non-audit purposes (e.g. capability token checks above).
+      // NOTE: PolicyEngine.createCanUseTool() does NOT use this field for
+      // ApprovalQueue audit records — the engine uses its own this._sessionId to
+      // prevent user-controlled fields from spoofing audit identity.
       const enrichedInput = { ...input, __jobId: jobId };
       return policyCanUseTool(tool, enrichedInput, options);
     };
