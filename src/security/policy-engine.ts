@@ -630,12 +630,13 @@ export class PolicyEngine {
           }
         } else if (this._approvalQueue?.isEnabled()) {
           // SEC-FIX-2: No flagCallback but ApprovalQueue is available — route through it.
-          // Use score=65 (the default flag threshold) so the queue treats it as a
-          // high-risk gate, not a blanket-allow candidate.
+          // Use score=85 (above the default blanketMaxScore of 80) so blanket-allow
+          // windows never auto-approve always_flag actions. Use trusted _sessionId,
+          // not the user-controlled __jobId from tool input, to prevent audit spoofing.
           const approved = await this._approvalQueue.request({
             action,
-            score: 65,
-            jobId: String(input['__jobId'] ?? 'unknown'),
+            score: 85,
+            jobId: this._sessionId ?? 'unknown',
             tool: toolName,
           });
           if (!approved) {
@@ -645,8 +646,12 @@ export class PolicyEngine {
             };
           }
         } else {
-          // No enforcement path available — log and allow (config present, no gate wired yet).
-          log.warn({ action, tool: toolName }, 'always_flag matched but no approval path registered — allowing');
+          // No enforcement path available — deny to fail-closed (config declared, no gate wired).
+          log.error({ action, tool: toolName }, 'always_flag matched but no approval path registered — denying');
+          return {
+            behavior: 'deny' as const,
+            message: `Action '${action}' requires approval but no approval path is registered`,
+          };
         }
       }
 

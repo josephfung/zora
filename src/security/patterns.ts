@@ -16,8 +16,8 @@ export const INJECTION_PATTERNS_CORE: RegExp[] = [
   /forget\s+(?:all\s+)?previous\s+instructions/i,
   /you\s+are\s+now\s+/i,
   /from\s+now\s+on\s+you\s+are/i,
-  /^system\s*:/im,
-  /^assistant\s*:/im,
+  /^\s*system\s*:/im,
+  /^\s*assistant\s*:/im,
   /\[\s*INST\s*\]/i,
   /<<\s*SYS\s*>>/i,
   /\bBEGIN\s+SYSTEM\s+PROMPT\b/i,
@@ -85,5 +85,6 @@ export const ALL_PATTERNS: RegExp[] = [
 /** All patterns used by the channel quarantine pre-screen. */
 export const ALL_CHANNEL_PATTERNS: RegExp[] = [
   ...INJECTION_PATTERNS_CORE,
+  ...ENCODED_INJECTION_PATTERNS,
   ...CHANNEL_PATTERNS,
 ];
