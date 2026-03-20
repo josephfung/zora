@@ -26,10 +26,10 @@ export const INJECTION_PATTERNS_CORE: RegExp[] = [
 
 // Encoded variants (base64 / hex of common injection phrases)
 export const ENCODED_INJECTION_PATTERNS: RegExp[] = [
-  // "ignore previous instructions" in base64
-  /aWdub3JlIHByZXZpb3VzIGluc3RydWN0aW9ucw=?/i,
-  // "you are now" in base64
-  /eW91IGFyZSBub3c=?/i,
+  // "ignore previous instructions" in base64 — allow 0-2 padding '=' characters
+  /aWdub3JlIHByZXZpb3VzIGluc3RydWN0aW9ucw={0,2}/i,
+  // "you are now" in base64 — allow 0-2 padding '=' characters
+  /eW91IGFyZSBub3c={0,2}/i,
 ];
 
 // ─── Channel-Specific Patterns (quarantine-processor pre-screen only) ─────────
@@ -39,7 +39,9 @@ export const ENCODED_INJECTION_PATTERNS: RegExp[] = [
  * These are channel-actor patterns that supplement INJECTION_PATTERNS_CORE.
  */
 export const CHANNEL_PATTERNS: RegExp[] = [
-  /act\s+as\s+(?:a\s+)?/i,
+  // "act as" only when followed by suspicious role-override terms, not legitimate
+  // developer phrasing like "act as a code reviewer" or "act as a senior engineer"
+  /act\s+as\s+(?:a\s+)?(?:different|another|new|hacked|jailbroken|unrestricted|unfiltered|dan|evil|uncensored)/i,
   /your\s+new\s+system\s+prompt/i,
   /\[\[SYSTEM\]\]/i,
   /capability\s+level\s+upgraded/i,

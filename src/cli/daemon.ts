@@ -277,10 +277,16 @@ async function main() {
       log.info({ adapters: activeAdapters.join(', ') }, 'Multi-channel architecture online');
 
       // ApprovalQueue is wired into PolicyEngine via orchestrator.setApprovalQueue() above.
-      // The send-handler transport (ChannelManager → ApprovalQueue) is not yet implemented;
-      // approval requests will auto-deny after timeout until a send handler is registered.
+      // The send-handler transport (ChannelManager → ApprovalQueue) is not yet implemented.
+      // IMPORTANT: Until a send-handler is registered, ApprovalQueue.request() operates in
+      // deny-by-default mode — all always_flag actions will be auto-denied immediately.
+      // Wire the ChannelManager send-handler before deploying to production to enable
+      // interactive approval. Operators who need the previous warn+allow behavior can
+      // temporarily remove the always_flag entries from channel-policy.toml.
       if (approvalQueue.isEnabled()) {
-        log.info('ApprovalQueue enabled — policy enforcement active (send-handler not yet wired to ChannelManager)');
+        log.warn(
+          'ApprovalQueue enabled (deny-by-default) — always_flag actions will be auto-denied until ChannelManager send-handler is registered',
+        );
       }
     } catch (err) {
       log.error({ err }, 'Failed to initialize multi-channel architecture');

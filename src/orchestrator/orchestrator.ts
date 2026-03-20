@@ -955,7 +955,9 @@ export class Orchestrator {
           // R8: Persist events via buffered writer (batched disk I/O).
           // tool_call events are deferred until after before-hooks run so
           // SecretRedactHook can modify args before they hit the log.
-          if (event.type !== 'tool_call') {
+          // tool_result events are also deferred until after sanitization so
+          // unsanitized injection content is never written to the session log.
+          if (event.type !== 'tool_call' && event.type !== 'tool_result') {
             bufferedWriter.append(event);
           }
 
@@ -991,6 +993,10 @@ export class Orchestrator {
               // Mutating .content is safe: AgentEvent is a plain object (not frozen), content is `unknown`.
               (event.content as Record<string, unknown>)['result'] = sanitizedResult;
             }
+
+            // Append sanitized tool_result to session log (deferred from the top of the loop
+            // to guarantee only sanitized content is persisted).
+            bufferedWriter.append(event);
 
             const leaks = this._leakDetector.scan(sanitizedResult);
             if (leaks.length > 0) {
@@ -1806,7 +1812,11 @@ export class Orchestrator {
           if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Command denied by capability token' };
         }
       }
-      return policyCanUseTool(tool, input, options);
+      // Inject jobId so PolicyEngine.createCanUseTool() can forward the real
+      // jobId to ApprovalQueue.request() for auditing. Without this the queue
+      // always receives jobId='unknown'.
+      const enrichedInput = { ...input, __jobId: jobId };
+      return policyCanUseTool(tool, enrichedInput, options);
     };
   }
 
