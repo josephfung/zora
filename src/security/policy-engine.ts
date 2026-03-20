@@ -27,6 +27,7 @@ import { DEFAULT_DRIFT_BLOCKING_MODE } from '../config/defaults.js';
 import type { BudgetStatus, DryRunResult } from './security-types.js';
 import type { IntentCapsuleManager } from './intent-capsule.js';
 import type { AuditLogger } from './audit-logger.js';
+import type { ApprovalQueue } from '../core/approval-queue.js';
 import { isENOENT } from '../utils/errors.js';
 import {
   shellTokenize,
@@ -89,6 +90,9 @@ export class PolicyEngine {
   private _intentCapsuleManager?: IntentCapsuleManager;
   private _auditLogger?: AuditLogger;
 
+  // ─── ApprovalQueue fallback (SEC-FIX-2) ─────────────────────────
+  private _approvalQueue?: ApprovalQueue;
+
   // ─── Drift Blocking Mode (ASI02) ────────────────────────────────
   private readonly _driftBlockingMode: 'advisory' | 'strict' | 'paranoid';
 
@@ -125,6 +129,15 @@ export class PolicyEngine {
    */
   setIntentCapsuleManager(manager: IntentCapsuleManager): void {
     this._intentCapsuleManager = manager;
+  }
+
+  /**
+   * Sets an optional ApprovalQueue to use as the enforcement path when no
+   * flagCallback is registered but always_flag matches an action (SEC-FIX-2).
+   * This closes the silent-pass gap in _shouldFlag handling.
+   */
+  setApprovalQueue(queue: ApprovalQueue): void {
+    this._approvalQueue = queue;
   }
 
   // ─── Budget Management (LLM06/LLM10) ─────────────────────────────
@@ -603,11 +616,11 @@ export class PolicyEngine {
       // Check always_flag for actions that require approval
       const action = this._classifyAction(toolName, input);
       if (action && this._shouldFlag(action)) {
-        if (this._flagCallback) {
-          const detail = toolName === 'Bash'
-            ? `Command: ${input['command']}`
-            : `${toolName}: ${input['file_path'] ?? JSON.stringify(input)}`;
+        const detail = toolName === 'Bash'
+          ? `Command: ${input['command']}`
+          : `${toolName}: ${input['file_path'] ?? JSON.stringify(input)}`;
 
+        if (this._flagCallback) {
           const approved = await this._flagCallback(action, detail);
           if (!approved) {
             return {
@@ -615,8 +628,26 @@ export class PolicyEngine {
               message: `Action '${action}' was flagged for approval and denied by user`,
             };
           }
+        } else if (this._approvalQueue?.isEnabled()) {
+          // SEC-FIX-2: No flagCallback but ApprovalQueue is available — route through it.
+          // Use score=65 (the default flag threshold) so the queue treats it as a
+          // high-risk gate, not a blanket-allow candidate.
+          const approved = await this._approvalQueue.request({
+            action,
+            score: 65,
+            jobId: String(input['__jobId'] ?? 'unknown'),
+            tool: toolName,
+          });
+          if (!approved) {
+            return {
+              behavior: 'deny' as const,
+              message: `Action '${action}' was flagged for approval and denied (ApprovalQueue)`,
+            };
+          }
+        } else {
+          // No enforcement path available — log and allow (config present, no gate wired yet).
+          log.warn({ action, tool: toolName }, 'always_flag matched but no approval path registered — allowing');
         }
-        // No callback = no enforcement (graceful: config parsed but not blocked)
       }
 
       // ─── Intent capsule drift check (ASI01) ────────────────────────

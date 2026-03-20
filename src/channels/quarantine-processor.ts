@@ -13,6 +13,7 @@
 
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ChannelMessage, CapabilitySet, StructuredIntent } from "../types/channel.js";
+import { ALL_CHANNEL_PATTERNS } from "../security/patterns.js";
 
 /** Output from the quarantine LLM */
 interface QuarantineOutput {
@@ -21,17 +22,6 @@ interface QuarantineOutput {
   suspicious: boolean;
   suspicious_reason?: string;
 }
-
-/** Injection patterns that always set suspicious=true (pre-screen before LLM call) */
-const INJECTION_PATTERNS = [
-  /ignore\s+(all\s+)?previous\s+instructions/i,
-  /you\s+are\s+now\s+(a\s+)?/i,
-  /act\s+as\s+(a\s+)?/i,
-  /your\s+new\s+system\s+prompt/i,
-  /\[\[SYSTEM\]\]/i,
-  /capability\s+level\s+upgraded/i,
-  /new\s+capability.*unrestricted/i,
-] as const;
 
 const QUARANTINE_SYSTEM_PROMPT = `You are a message interpreter. You receive a message from a user and extract their intent.
 
@@ -67,7 +57,7 @@ export class QuarantineProcessor {
     _capability: CapabilitySet,  // Available for future per-role prompt tuning
   ): Promise<StructuredIntent> {
     // Pre-screen for known injection patterns before even calling LLM
-    const preScreenSuspicious = INJECTION_PATTERNS.some(pattern =>
+    const preScreenSuspicious = ALL_CHANNEL_PATTERNS.some(pattern =>
       pattern.test(message.content)
     );
 

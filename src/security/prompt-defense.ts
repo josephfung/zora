@@ -3,52 +3,13 @@
  *
  * Spec §5.5 "Prompt Injection Defense":
  *   - sanitizeInput: wraps injection patterns in <untrusted_content> tags
+ *   - sanitizeToolOutput: wraps injection patterns in <untrusted_tool_output> tags
  *   - validateOutput: checks tool calls for suspicious patterns
+ *
+ * Injection pattern definitions live in ./patterns.ts (single source of truth).
  */
 
-// ─── Injection Patterns ─────────────────────────────────────────────
-
-const INJECTION_PATTERNS: RegExp[] = [
-  /ignore\s+(?:all\s+)?previous\s+instructions/i,
-  /disregard\s+(?:all\s+)?previous\s+instructions/i,
-  /forget\s+(?:all\s+)?previous\s+instructions/i,
-  /you\s+are\s+now\s+/i,
-  /from\s+now\s+on\s+you\s+are/i,
-  /^system\s*:/im,
-  /^assistant\s*:/im,
-  /\[\s*INST\s*\]/i,
-  /<<\s*SYS\s*>>/i,
-  /\bBEGIN\s+SYSTEM\s+PROMPT\b/i,
-  /\bEND\s+SYSTEM\s+PROMPT\b/i,
-];
-
-// Encoded variants (base64 / hex of common injection phrases)
-const ENCODED_INJECTION_PATTERNS: RegExp[] = [
-  // "ignore previous instructions" in base64
-  /aWdub3JlIHByZXZpb3VzIGluc3RydWN0aW9ucw=?/i,
-  // "you are now" in base64
-  /eW91IGFyZSBub3c=?/i,
-];
-
-// RAG/tool-output injection patterns (ASI01 mitigation)
-const RAG_INJECTION_PATTERNS: RegExp[] = [
-  // Instructions disguised in retrieved documents
-  /\[IMPORTANT INSTRUCTION\]/i,
-  /\bIMPORTANT:\s*ignore\b/i,
-  /\bNOTE TO AI\b/i,
-  /\bHIDDEN INSTRUCTION\b/i,
-  // Markdown comment-based injection
-  /<!--\s*(?:system|instruction|override)\b/i,
-  // JSON escape-based injection in tool outputs
-  /\\n\s*system\s*:/i,
-  // XML tag injection in tool results
-  /<\/?(?:system|instruction|override|admin)\s*>/i,
-  // Delimiter-based injection
-  /---+\s*(?:NEW INSTRUCTIONS|OVERRIDE|SYSTEM PROMPT)/i,
-  // Role impersonation in tool outputs
-  /\bASSISTANT:\s*I\s+(?:will|must|should)\b/i,
-  /\bUSER:\s*(?:ignore|override|forget)\b/i,
-];
+import { ALL_PATTERNS, ENCODED_INJECTION_PATTERNS } from './patterns.js';
 
 // ─── Suspicious Output Patterns ─────────────────────────────────────
 
@@ -82,9 +43,7 @@ export interface OutputValidationResult {
 export function sanitizeInput(content: string): string {
   let result = content;
 
-  const allPatterns = [...INJECTION_PATTERNS, ...ENCODED_INJECTION_PATTERNS, ...RAG_INJECTION_PATTERNS];
-
-  for (const pattern of allPatterns) {
+  for (const pattern of ALL_PATTERNS) {
     // Ensure global flag is set so all occurrences are replaced, not just the first
     const globalPattern = pattern.global
       ? pattern
@@ -103,13 +62,7 @@ export function sanitizeInput(content: string): string {
 export function sanitizeToolOutput(content: string): string {
   let result = content;
 
-  const allPatterns = [
-    ...INJECTION_PATTERNS,
-    ...ENCODED_INJECTION_PATTERNS,
-    ...RAG_INJECTION_PATTERNS,
-  ];
-
-  for (const pattern of allPatterns) {
+  for (const pattern of ALL_PATTERNS) {
     const globalPattern = pattern.global
       ? pattern
       : new RegExp(pattern.source, pattern.flags + 'g');

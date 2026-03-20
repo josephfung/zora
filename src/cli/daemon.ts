@@ -188,6 +188,9 @@ async function main() {
 
   const providers = createProviders(config);
   const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });
+  // SEC-FIX-2: Register ApprovalQueue before boot() so PolicyEngine has an enforcement
+  // path for always_flag actions even when no flagCallback is wired.
+  orchestrator.setApprovalQueue(approvalQueue);
   await orchestrator.boot();
 
   // Register with AgentBus (best-effort — failure doesn't block startup)
@@ -273,10 +276,11 @@ async function main() {
       if (telegramRegistered) activeAdapters.push('telegram');
       log.info({ adapters: activeAdapters.join(', ') }, 'Multi-channel architecture online');
 
-      // TODO: wire ApprovalQueue to ChannelManager once the ChannelManager exposes
-      // a sendApprovalRequest() method (replaces old TelegramGateway.connectApprovalQueue).
+      // ApprovalQueue is wired into PolicyEngine via orchestrator.setApprovalQueue() above.
+      // The send-handler transport (ChannelManager → ApprovalQueue) is not yet implemented;
+      // approval requests will auto-deny after timeout until a send handler is registered.
       if (approvalQueue.isEnabled()) {
-        log.warn('ApprovalQueue enabled but ChannelManager approval transport not yet implemented — approval gating disabled until wired');
+        log.info('ApprovalQueue enabled — policy enforcement active (send-handler not yet wired to ChannelManager)');
       }
     } catch (err) {
       log.error({ err }, 'Failed to initialize multi-channel architecture');
