@@ -11,6 +11,16 @@
 import crypto from 'node:crypto';
 import type { IntentCapsule, DriftCheckResult } from './security-types.js';
 
+/**
+ * Terms that signal potential data exfiltration or credential exposure.
+ * Presence in an action (but NOT in the mandate) reduces effective overlap ratio.
+ */
+const SUSPICIOUS_TERMS = new Set([
+  'credentials', 'external', 'exfiltrate', 'upload', 'post', 'token',
+  'secret', 'secrets', 'api_key', 'apikey', 'password', 'passwd', 'curl', 'wget',
+  'send', 'transmit', 'export', 'leak', 'dump', 'harvest',
+]);
+
 const STOP_WORDS = new Set([
   'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
   'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
@@ -135,19 +145,32 @@ export class IntentCapsuleManager {
 
     // Keyword overlap check: does the action detail relate to the mandate?
     const actionKeywords = this._extractKeywords(actionDetail);
-    const overlap = actionKeywords.filter(k => capsule.mandateKeywords.includes(k));
+    const mandateKeywordSet = new Set(capsule.mandateKeywords);
+    const overlap = actionKeywords.filter(k => mandateKeywordSet.has(k));
     const overlapRatio = actionKeywords.length > 0
       ? overlap.length / actionKeywords.length
       : 1.0; // empty action detail = no drift signal
 
-    const consistent = overlapRatio >= 0.1; // At least 10% keyword overlap
-    const confidence = consistent ? overlapRatio : 1.0 - overlapRatio;
+    // Layer 2: suspicious term penalty.
+    // Count terms in the action (not in the mandate) that signal exfiltration/credential risk.
+    // Each such term reduces effective overlap by 15%, capped at 60% total reduction.
+    const suspiciousCount = actionKeywords.filter(
+      k => SUSPICIOUS_TERMS.has(k) && !mandateKeywordSet.has(k),
+    ).length;
+    const suspicionPenalty = Math.min(suspiciousCount * 0.15, 0.60);
+    const effectiveRatio = overlapRatio * (1 - suspicionPenalty);
+
+    // Layer 1: require at least 40% effective keyword overlap.
+    const consistent = effectiveRatio >= 0.4;
+    const confidence = consistent ? effectiveRatio : 1.0 - effectiveRatio;
 
     const result: DriftCheckResult = {
       consistent,
       confidence,
       ...(!consistent ? {
-        reason: `Low mandate relevance (${(overlapRatio * 100).toFixed(0)}% keyword overlap)`,
+        reason: suspiciousCount > 0
+          ? `Low mandate relevance (${(overlapRatio * 100).toFixed(0)}% overlap, ${suspiciousCount} suspicious term${suspiciousCount > 1 ? 's' : ''} detected)`
+          : `Low mandate relevance (${(overlapRatio * 100).toFixed(0)}% keyword overlap)`,
       } : {}),
       action: actionType,
       mandateHash: capsule.mandateHash,
