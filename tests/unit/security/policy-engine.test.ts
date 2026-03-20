@@ -437,12 +437,13 @@ describe('always_flag enforcement', () => {
     expect(flagCallback).not.toHaveBeenCalled();
   });
 
-  it('allows without callback when always_flag is configured but no callback set', async () => {
-    const engine = new PolicyEngine(flagPolicy); // no callback
+  it('denies when always_flag is configured but no approval path is registered (fail-closed)', async () => {
+    const engine = new PolicyEngine(flagPolicy); // no callback, no ApprovalQueue
     const canUseTool = engine.createCanUseTool();
 
     const result = await canUseTool('Bash', { command: 'git push' }, { signal });
-    expect(result.behavior).toBe('allow');
+    expect(result.behavior).toBe('deny');
+    expect(result.message).toMatch(/requires approval but no approval path is registered/);
   });
 
   it('flags all actions when always_flag includes wildcard', async () => {

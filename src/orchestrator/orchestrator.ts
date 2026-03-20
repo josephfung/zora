@@ -955,7 +955,9 @@ export class Orchestrator {
           // R8: Persist events via buffered writer (batched disk I/O).
           // tool_call events are deferred until after before-hooks run so
           // SecretRedactHook can modify args before they hit the log.
-          if (event.type !== 'tool_call') {
+          // tool_result events are also deferred until after sanitization so
+          // unsanitized injection content is never written to the session log.
+          if (event.type !== 'tool_call' && event.type !== 'tool_result') {
             bufferedWriter.append(event);
           }
 
@@ -991,6 +993,9 @@ export class Orchestrator {
               // Mutating .content is safe: AgentEvent is a plain object (not frozen), content is `unknown`.
               (event.content as Record<string, unknown>)['result'] = sanitizedResult;
             }
+
+            // Append after sanitization so the persisted event always contains the sanitized content.
+            bufferedWriter.append(event);
 
             const leaks = this._leakDetector.scan(sanitizedResult);
             if (leaks.length > 0) {
