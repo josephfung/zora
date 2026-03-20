@@ -994,7 +994,8 @@ export class Orchestrator {
               (event.content as Record<string, unknown>)['result'] = sanitizedResult;
             }
 
-            // Append after sanitization so the persisted event always contains the sanitized content.
+            // Append sanitized tool_result to session log (deferred from the top of the loop
+            // to guarantee only sanitized content is persisted).
             bufferedWriter.append(event);
 
             const leaks = this._leakDetector.scan(sanitizedResult);
@@ -1811,7 +1812,12 @@ export class Orchestrator {
           if (!capResult.allowed) return { behavior: 'deny' as const, message: capResult.reason ?? 'Command denied by capability token' };
         }
       }
-      return policyCanUseTool(tool, input, options);
+      // Inject __jobId for non-audit purposes (e.g. capability token checks above).
+      // NOTE: PolicyEngine.createCanUseTool() does NOT use this field for
+      // ApprovalQueue audit records — the engine uses its own this._sessionId to
+      // prevent user-controlled fields from spoofing audit identity.
+      const enrichedInput = { ...input, __jobId: jobId };
+      return policyCanUseTool(tool, enrichedInput, options);
     };
   }
 

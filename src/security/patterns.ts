@@ -39,7 +39,9 @@ export const ENCODED_INJECTION_PATTERNS: RegExp[] = [
  * These are channel-actor patterns that supplement INJECTION_PATTERNS_CORE.
  */
 export const CHANNEL_PATTERNS: RegExp[] = [
-  /act\s+as\s+(?:a\s+)?/i,
+  // "act as" only when followed by suspicious role-override terms, not legitimate
+  // developer phrasing like "act as a code reviewer" or "act as a senior engineer"
+  /act\s+as\s+(?:a\s+)?(?:different|another|new|hacked|jailbroken|unrestricted|unfiltered|dan|evil|uncensored)/i,
   /your\s+new\s+system\s+prompt/i,
   /\[\[SYSTEM\]\]/i,
   /capability\s+level\s+upgraded/i,

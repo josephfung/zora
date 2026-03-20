@@ -42,7 +42,7 @@ function makeApprovalQueueSpy(approved: boolean): ApprovalQueue {
   return {
     isEnabled: vi.fn().mockReturnValue(true),
     request: vi.fn().mockResolvedValue(approved),
-  } as unknown as ApprovalQueue;
+  } satisfies Pick<ApprovalQueue, 'isEnabled' | 'request'> as unknown as ApprovalQueue;
 }
 
 describe('PolicyEngine._shouldFlag routes to ApprovalQueue (SEC-FIX-2)', () => {
@@ -111,7 +111,7 @@ describe('PolicyEngine._shouldFlag routes to ApprovalQueue (SEC-FIX-2)', () => {
     const mockQueue = {
       isEnabled: vi.fn().mockReturnValue(false),
       request: vi.fn().mockResolvedValue(false),
-    } as unknown as ApprovalQueue;
+    } satisfies Pick<ApprovalQueue, 'isEnabled' | 'request'> as unknown as ApprovalQueue;
     engine.setApprovalQueue(mockQueue);
 
     const canUseTool = engine.createCanUseTool();

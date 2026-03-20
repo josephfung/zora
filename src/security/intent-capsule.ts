@@ -11,6 +11,16 @@
 import crypto from 'node:crypto';
 import type { IntentCapsule, DriftCheckResult } from './security-types.js';
 
+/**
+ * Terms that signal potential data exfiltration or credential exposure.
+ * Presence in an action (but NOT in the mandate) reduces effective overlap ratio.
+ */
+const SUSPICIOUS_TERMS = new Set([
+  'credentials', 'external', 'exfiltrate', 'upload', 'post', 'token',
+  'secret', 'secrets', 'api_key', 'apikey', 'password', 'passwd', 'curl', 'wget',
+  'send', 'transmit', 'export', 'leak', 'dump', 'harvest',
+]);
+
 const STOP_WORDS = new Set([
   'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been',
   'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would',
@@ -135,19 +145,52 @@ export class IntentCapsuleManager {
 
     // Keyword overlap check: does the action detail relate to the mandate?
     const actionKeywords = this._extractKeywords(actionDetail);
-    const overlap = actionKeywords.filter(k => capsule.mandateKeywords.includes(k));
-    const overlapRatio = actionKeywords.length > 0
-      ? overlap.length / actionKeywords.length
-      : 1.0; // empty action detail = no drift signal
+    const mandateKeywordSet = new Set(capsule.mandateKeywords);
 
-    const consistent = overlapRatio >= 0.1; // At least 10% keyword overlap
-    const confidence = consistent ? overlapRatio : 1.0 - overlapRatio;
+    // Empty action keywords → treat as zero-overlap (not a perfect match).
+    // A zero-length input carries no information and should not bypass drift detection.
+    if (actionKeywords.length === 0) {
+      const result: DriftCheckResult = {
+        consistent: false,
+        confidence: 1.0,
+        reason: 'Action detail contains no meaningful keywords — cannot verify mandate alignment',
+        action: actionType,
+        mandateHash: capsule.mandateHash,
+      };
+      this._driftHistory.push(result);
+      return result;
+    }
+
+    const overlap = actionKeywords.filter(k => mandateKeywordSet.has(k));
+    const overlapRatio = overlap.length / actionKeywords.length;
+
+    // Layer 2: suspicious term penalty.
+    // Normalize each action keyword (split on hyphens/underscores and stem common suffixes)
+    // before checking against SUSPICIOUS_TERMS to catch patterns like "sending", "external-host".
+    const normalizedActionTokens = actionKeywords.flatMap(k => this._normalizeToken(k));
+    const normalizedMandateTokens = new Set(
+      capsule.mandateKeywords.flatMap(k => this._normalizeToken(k)),
+    );
+    const suspiciousCount = normalizedActionTokens.filter(
+      t => SUSPICIOUS_TERMS.has(t) && !normalizedMandateTokens.has(t),
+    ).length;
+    const suspicionPenalty = Math.min(suspiciousCount * 0.15, 0.60);
+    const effectiveRatio = overlapRatio * (1 - suspicionPenalty);
+
+    // Layer 1: require at least 40% effective keyword overlap. When any suspicious terms are
+    // detected, also require that the effective overlap strictly exceeds the base threshold to
+    // prevent borderline pass-through of injected exfiltration terms.
+    const effectiveThreshold = suspiciousCount > 0 ? 0.45 : 0.4;
+    const consistent = effectiveRatio >= effectiveThreshold;
+    const confidence = consistent ? effectiveRatio : 1.0 - effectiveRatio;
 
     const result: DriftCheckResult = {
       consistent,
       confidence,
       ...(!consistent ? {
-        reason: `Low mandate relevance (${(overlapRatio * 100).toFixed(0)}% keyword overlap)`,
+        reason: suspiciousCount > 0
+          ? `Low mandate relevance (${(overlapRatio * 100).toFixed(0)}% overlap → ${(effectiveRatio * 100).toFixed(0)}% effective overlap, ${suspiciousCount} suspicious term${suspiciousCount > 1 ? 's' : ''} detected)`
+          : `Low mandate relevance (${(overlapRatio * 100).toFixed(0)}% keyword overlap)`,
       } : {}),
       action: actionType,
       mandateHash: capsule.mandateHash,
@@ -268,5 +311,23 @@ export class IntentCapsuleManager {
       .replace(/[^a-z0-9\s_-]/g, ' ')
       .split(/\s+/)
       .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+  }
+
+  /**
+   * Normalize a single keyword for suspicious-term matching.
+   * Splits hyphenated/underscored compound tokens and strips common verb suffixes
+   * so that "external-host" → ["external", "host"], "sending" → ["send"], etc.
+   */
+  private _normalizeToken(token: string): string[] {
+    const parts = token.split(/[-_]+/).filter(p => p.length > 1);
+    return parts.map(p => {
+      // Strip common English inflection suffixes to reach the root form.
+      if (p.endsWith('ing') && p.length > 5) return p.slice(0, -3);
+      if (p.endsWith('tion') && p.length > 5) return p.slice(0, -4);
+      if (p.endsWith('ed') && p.length > 4) return p.slice(0, -2);
+      if (p.endsWith('ing') && p.length > 4) return p.slice(0, -3);
+      if (p.endsWith('s') && p.length > 4) return p.slice(0, -1);
+      return p;
+    });
   }
 }
