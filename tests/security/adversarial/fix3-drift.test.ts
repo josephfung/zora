@@ -128,11 +128,9 @@ describe('Adversarial drift detection — Fix 3 (two-layer scoring)', () => {
     });
 
     it('drift results are recorded in history', () => {
-      manager.createCapsule('refactor the auth module');
-
-      for (const { action } of attacks) {
+      for (const { mandate, action } of attacks) {
         const freshManager = new IntentCapsuleManager('adversarial-test-secret-2026');
-        freshManager.createCapsule('refactor the auth module');
+        freshManager.createCapsule(mandate);
         freshManager.checkDrift('shell_exec', action);
         expect(freshManager.getDriftHistory()).toHaveLength(1);
       }

@@ -141,10 +141,11 @@ describe('IntentCapsuleManager', () => {
       expect(result.consistent).toBe(true);
     });
 
-    it('passes with empty action detail (no drift signal)', () => {
+    it('rejects empty action detail — zero keywords cannot verify mandate alignment', () => {
       manager.createCapsule('Fix authentication bug');
       const result = manager.checkDrift('write_file', '');
-      expect(result.consistent).toBe(true);
+      expect(result.consistent).toBe(false);
+      expect(result.reason).toContain('no meaningful keywords');
     });
 
     it('no allowed categories means category check is skipped', () => {
@@ -200,14 +201,14 @@ describe('IntentCapsuleManager', () => {
       // update (✓) readme (✓) → overlap 2, action kws = [update, readme, additional, formatting, fixes] = 5 → 40%
       expect(passingResult.consistent).toBe(true);
 
-      // 1 mandate word out of 5 action words = 20% overlap — below threshold
+      // 1 mandate word out of 5 action words = 20% overlap — near-threshold but below 40%
       const manager2 = new IntentCapsuleManager('test-signing-secret-2026');
       manager2.createCapsule('update the readme documentation guide');
       const failingResult = manager2.checkDrift(
         'edit_file',
-        'completely overhaul formatting structure conventions',
+        'update the overall formatting structure conventions',
       );
-      // No mandate words in this action — 0% overlap → fails
+      // "update" matches (1/5 = 20%) → below 40% threshold → fails
       expect(failingResult.consistent).toBe(false);
     });
 
@@ -230,11 +231,11 @@ describe('IntentCapsuleManager', () => {
       expect(result.reason).toContain('suspicious term');
     });
 
-    it('SECURITY: zero action keywords → consistent: true (existing edge behaviour preserved)', () => {
+    it('SECURITY: zero action keywords → consistent: false (cannot verify mandate alignment)', () => {
       manager.createCapsule('Fix authentication bug');
-      // Empty string → _extractKeywords returns [] → overlapRatio = 1.0 → no drift signal
+      // Empty string → _extractKeywords returns [] → treated as unverifiable, not a perfect match
       const result = manager.checkDrift('write_file', '');
-      expect(result.consistent).toBe(true);
+      expect(result.consistent).toBe(false);
     });
 
     it('SECURITY: all action keywords are suspicious terms → fails hard', () => {
