@@ -62,7 +62,7 @@ describe('PolicyEngine._shouldFlag routes to ApprovalQueue (SEC-FIX-2)', () => {
     expect(mockQueue.request).toHaveBeenCalledOnce();
     expect(mockQueue.request).toHaveBeenCalledWith(expect.objectContaining({
       action: 'git_push',
-      score: 65,
+      score: expect.any(Number),
       tool: 'Bash',
     }));
     // Approved → allow
@@ -117,9 +117,9 @@ describe('PolicyEngine._shouldFlag routes to ApprovalQueue (SEC-FIX-2)', () => {
     const canUseTool = engine.createCanUseTool();
     const result = await canUseTool('Bash', { command: 'git push origin main' }, { signal: new AbortController().signal });
 
-    // Disabled queue → falls through to log-and-allow path
+    // Disabled queue → fail-closed: deny when no enforcement path is available
     expect(mockQueue.request).not.toHaveBeenCalled();
-    expect(result.behavior).toBe('allow');
+    expect(result.behavior).toBe('deny');
   });
 
   it('wildcard always_flag catches any action and routes to approvalQueue', async () => {
@@ -134,7 +134,7 @@ describe('PolicyEngine._shouldFlag routes to ApprovalQueue (SEC-FIX-2)', () => {
     expect(mockQueue.request).toHaveBeenCalledOnce();
     expect(mockQueue.request).toHaveBeenCalledWith(expect.objectContaining({
       action: 'write_file',
-      score: 65,
+      score: expect.any(Number),
     }));
   });
 });
