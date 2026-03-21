@@ -990,8 +990,7 @@ export class Orchestrator {
                 'Prompt injection pattern detected in tool output — sanitized',
               );
               // Replace the event content with the sanitized result so it reaches the LLM safely.
-              // Mutating .content is safe: AgentEvent is a plain object (not frozen), content is `unknown`.
-              (event.content as Record<string, unknown>)['result'] = sanitizedResult;
+              toolResultContent.result = sanitizedResult;
             }
 
             // Append sanitized tool_result to session log (deferred from the top of the loop
