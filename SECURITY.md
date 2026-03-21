@@ -153,8 +153,8 @@ Every action now receives a 0–100 irreversibility score before it executes. Th
 | `write_file` | 20 | File can be restored from version control |
 | `edit_file` | 20 | Same as write |
 | `git_commit` | 30 | Can be reverted |
-| `shell_exec` | 50 | Variable impact |
 | `mv` | 40 | Source path lost |
+| `shell_exec` | 50 | Variable impact |
 | `git_push` | 70 | Requires force-push to undo; others may have pulled |
 | `send_message` | 80 | Recipient has seen it |
 | `shell_exec_destructive` | 90 | Hard to recover |
