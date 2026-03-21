@@ -107,7 +107,7 @@ describe('PolicyEngine._shouldFlag routes to ApprovalQueue (SEC-FIX-2)', () => {
     expect(mockQueue.request).not.toHaveBeenCalled();
   });
 
-  it('allows action when approvalQueue is disabled (isEnabled returns false)', async () => {
+  it('denies action when approvalQueue is disabled (isEnabled returns false) — fail-closed', async () => {
     const mockQueue = {
       isEnabled: vi.fn().mockReturnValue(false),
       request: vi.fn().mockResolvedValue(false),

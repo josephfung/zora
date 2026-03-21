@@ -55,8 +55,8 @@ describe('patterns.ts — structural integrity', () => {
   it('CHANNEL_PATTERNS are NOT in ALL_PATTERNS (path separation maintained)', () => {
     // Channel patterns are quarantine-only — they should not contaminate the general path
     for (const pattern of CHANNEL_PATTERNS) {
-      // GENERAL_PATTERNS should not include channel-specific patterns
-      expect(GENERAL_PATTERNS.some(p => p.source === pattern.source)).toBe(false);
+      // ALL_PATTERNS should not include channel-specific patterns
+      expect(ALL_PATTERNS.some(p => p.source === pattern.source)).toBe(false);
     }
   });
 });
