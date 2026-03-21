@@ -978,8 +978,9 @@ export class Orchestrator {
           // SEC-FIX-1: Sanitize tool output to neutralize prompt injection before LLM sees it.
           if (event.type === 'tool_result') {
             const toolResultContent = event.content as ToolResultEventContent;
-            const resultText = typeof toolResultContent.result === 'string'
-              ? toolResultContent.result
+            const originalIsString = typeof toolResultContent.result === 'string';
+            const resultText = originalIsString
+              ? toolResultContent.result as string
               : JSON.stringify(toolResultContent.result ?? '');
 
             // Wrap injection patterns in <untrusted_tool_output> tags before adding to history
@@ -989,8 +990,14 @@ export class Orchestrator {
                 { jobId: taskContext.jobId, toolCallId: toolResultContent.toolCallId },
                 'Prompt injection pattern detected in tool output — sanitized',
               );
-              // Replace the event content with the sanitized result so it reaches the LLM safely.
-              toolResultContent.result = sanitizedResult;
+              // Only overwrite result when the original was already a string.
+              // If it was structured (object/array), preserve the original shape;
+              // the injection was in the JSON representation, which will be sanitized
+              // when the LLM serializes it again. Replacing with a plain string
+              // would break downstream hooks and replay logic that expect structure.
+              if (originalIsString) {
+                toolResultContent.result = sanitizedResult;
+              }
             }
 
             // Append sanitized tool_result to session log (deferred from the top of the loop
