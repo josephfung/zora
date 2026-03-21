@@ -56,9 +56,20 @@ export class QuarantineProcessor {
     message: ChannelMessage,
     _capability: CapabilitySet,  // Available for future per-role prompt tuning
   ): Promise<StructuredIntent> {
-    // Pre-screen for known injection patterns before even calling LLM
-    const preScreenSuspicious = ALL_CHANNEL_PATTERNS.some(pattern =>
-      pattern.test(message.content)
+    // Pre-screen for known injection patterns before even calling LLM.
+    // Normalize encoded variants (URL, unicode escapes, base64) so encoded payloads
+    // are caught before they reach the quarantine LLM.
+    const candidates = [message.content];
+    try { candidates.push(decodeURIComponent(message.content)); } catch { /* malformed URL encoding — skip */ }
+    candidates.push(
+      message.content.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) =>
+        String.fromCharCode(parseInt(hex, 16)),
+      ),
+    );
+    try { candidates.push(Buffer.from(message.content, 'base64').toString('utf8')); } catch { /* malformed base64 — skip */ }
+
+    const preScreenSuspicious = candidates.some(candidate =>
+      ALL_CHANNEL_PATTERNS.some(pattern => pattern.test(candidate))
     );
 
     if (preScreenSuspicious) {

@@ -182,7 +182,11 @@ async function main() {
     ...DEFAULT_APPROVAL_CONFIG,
     ...(approvalConfig ? {
       enabled: (approvalConfig['enabled'] as boolean) ?? false,
-      timeoutMs: ((approvalConfig['timeout_s'] as number) ?? 300) * 1000,
+      timeoutMs: (() => {
+        const raw = approvalConfig['timeout_s'] as number | undefined;
+        const s = typeof raw === 'number' && Number.isFinite(raw) && raw > 0 ? raw : 300;
+        return s * 1000;
+      })(),
     } : {}),
   });
 
