@@ -289,13 +289,38 @@ export class ClaudeProvider implements LLMProvider {
       sdkOptions['canUseTool'] = task.canUseTool;
     }
 
-    // Forward custom tools from TaskContext (memory tools, permissions, etc.)
+    // Register custom tools as an in-process MCP server.
+    // The SDK ignores sdkOptions['customTools'] — the only supported mechanism
+    // is createSdkMcpServer(), which exposes tools with mcp__<server>__<name> prefixes.
+    // See execution-loop.ts for the same pattern.
     if (task.customTools && task.customTools.length > 0) {
-      sdkOptions['customTools'] = task.customTools.map(t => ({
+      const sdk = await import('@anthropic-ai/claude-agent-sdk');
+      const toolDefs = task.customTools.map(t => ({
         name: t.name,
         description: t.description,
-        input_schema: t.input_schema,
+        inputSchema: t.input_schema as Record<string, unknown>,
+        handler: async (args: Record<string, unknown>) => {
+          const result = await t.handler(args);
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+          };
+        },
       }));
+
+      const mcpServers: Record<string, unknown> = {
+        ...(sdkOptions['mcpServers'] as Record<string, unknown> ?? {}),
+      };
+      mcpServers['zora-tools'] = sdk.createSdkMcpServer({
+        name: 'zora-tools',
+        version: '1.0.0',
+        tools: toolDefs,
+      });
+      sdkOptions['mcpServers'] = mcpServers;
+
+      // Add MCP-prefixed tool names to allowedTools so the SDK permits them
+      const customToolNames = task.customTools.map(t => `mcp__zora-tools__${t.name}`);
+      const existingAllowed = (sdkOptions['allowedTools'] as string[] | undefined) ?? [];
+      sdkOptions['allowedTools'] = [...existingAllowed, ...customToolNames];
     }
 
     // Build the prompt from task context
