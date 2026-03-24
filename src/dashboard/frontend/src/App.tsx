@@ -229,12 +229,9 @@ const App: React.FC = () => {
     setTaskSteps([]);
 
     try {
-      await axios.post('/api/steer', {
-        jobId: selectedJob,
-        message: prompt,
-        author: 'operator',
-        source: 'dashboard',
-      });
+      // Submit as a new task to the orchestrator (not /api/steer, which is
+      // for injecting mid-flight corrections into already-running tasks)
+      await axios.post('/api/task', { prompt });
     } catch (err) {
       console.error('Task submission failed', err);
       setMessages(prev => [
@@ -379,10 +376,36 @@ const App: React.FC = () => {
         let msgType: Message['type'] = 'agent';
         let content = '';
 
-        if (data.type === 'job_update') {
+        if (data.type === 'done') {
+          // Task completed — the result text was already streamed via 'text' events,
+          // so we only add a message if the agent bubble is missing.
+          const text = data.data?.text ?? '';
+          if (text) {
+            setMessages(prev => {
+              const last = prev[prev.length - 1];
+              if (last?.type === 'agent') return prev; // already shown via text streaming
+              return [...prev, { id: ++messageIdCounter, type: 'agent' as const, content: text, timestamp: new Date() }].slice(-MAX_MESSAGES);
+            });
+          }
+          setTaskRunning(false);
+          return;
+        } else if (data.type === 'task.end') {
+          // Lifecycle marker — clear progress in case 'done' was missed
+          setTaskRunning(false);
+          return;
+        } else if (data.type === 'job_failed') {
+          msgType = 'system';
+          content = `Task failed: ${data.data?.error ?? 'Unknown error'}`;
+          setTaskRunning(false);
+        } else if (data.type === 'task.start') {
+          // Task accepted — already tracking via taskRunning, no visible message needed
+          return;
+        } else if (data.type === 'turn.start' || data.type === 'turn.end') {
+          // Turn lifecycle markers — no visible action needed
+          return;
+        } else if (data.type === 'job_update') {
           msgType = 'system';
           content = `Task ${data.data?.status === 'completed' ? 'completed' : data.data?.status ?? 'update'}`;
-          // Track task completion
           if (data.data?.status === 'completed' || data.data?.status === 'failed') {
             setTaskRunning(false);
           }
