@@ -292,27 +292,45 @@ export class ClaudeProvider implements LLMProvider {
     // Register custom tools as an in-process MCP server.
     // The SDK ignores sdkOptions['customTools'] — the only supported mechanism
     // is createSdkMcpServer(), which exposes tools with mcp__<server>__<name> prefixes.
-    // See execution-loop.ts for the same pattern.
+    //
+    // IMPORTANT: The SDK's SdkMcpToolDefinition expects Zod schemas for inputSchema,
+    // not raw JSON Schema objects. We use the SDK's tool() helper which handles this.
+    // Our CustomToolDefinition uses raw JSON Schema (input_schema), so we convert
+    // each property to z.any() to create a compatible Zod shape. The actual input
+    // validation happens inside each tool's own handler.
     if (task.customTools && task.customTools.length > 0) {
       const sdk = await import('@anthropic-ai/claude-agent-sdk');
-      const toolDefs = task.customTools.map(t => ({
-        name: t.name,
-        description: t.description,
-        inputSchema: t.input_schema as Record<string, unknown>,
-        handler: async (args: Record<string, unknown>) => {
-          try {
-            const result = await t.handler(args);
-            return {
-              content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-            };
-          } catch (err) {
-            // Log here because MCP handler errors are invisible to Zora's logging —
-            // the SDK returns them directly to the agent without emitting events.
-            console.error(`[zora-tools] ${t.name} handler error:`, err);
-            throw err;
-          }
-        },
-      }));
+      const { z } = await import('zod');
+
+      const toolDefs = task.customTools.map(t => {
+        // Build a Zod shape from the JSON Schema properties.
+        // Each property becomes z.any() with .describe() for the SDK's schema generation.
+        // Real validation is handled by the tool's own handler.
+        const props = (t.input_schema.properties ?? {}) as Record<string, { description?: string }>;
+        const zodShape: Record<string, z.ZodTypeAny> = {};
+        for (const [key, prop] of Object.entries(props)) {
+          zodShape[key] = z.any().describe(prop.description ?? '');
+        }
+
+        return sdk.tool(
+          t.name,
+          t.description,
+          zodShape,
+          async (args: Record<string, unknown>) => {
+            try {
+              const result = await t.handler(args);
+              return {
+                content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+              };
+            } catch (err) {
+              // Log here because MCP handler errors are invisible to Zora's logging —
+              // the SDK returns them directly to the agent without emitting events.
+              console.error(`[zora-tools] ${t.name} handler error:`, err);
+              throw err;
+            }
+          },
+        );
+      });
 
       const mcpServers: Record<string, unknown> = {
         ...(sdkOptions['mcpServers'] as Record<string, unknown> ?? {}),
