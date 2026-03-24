@@ -289,13 +289,70 @@ export class ClaudeProvider implements LLMProvider {
       sdkOptions['canUseTool'] = task.canUseTool;
     }
 
-    // Forward custom tools from TaskContext (memory tools, permissions, etc.)
+    // Register custom tools as an in-process MCP server.
+    // The SDK ignores sdkOptions['customTools'] — the only supported mechanism
+    // is createSdkMcpServer(), which exposes tools with mcp__<server>__<name> prefixes.
+    //
+    // IMPORTANT: The SDK's SdkMcpToolDefinition expects Zod schemas for inputSchema,
+    // not raw JSON Schema objects. We use the SDK's tool() helper which handles this.
+    // Our CustomToolDefinition uses raw JSON Schema (input_schema), so we convert
+    // each property to z.any() to create a compatible Zod shape. The actual input
+    // validation happens inside each tool's own handler.
     if (task.customTools && task.customTools.length > 0) {
-      sdkOptions['customTools'] = task.customTools.map(t => ({
-        name: t.name,
-        description: t.description,
-        input_schema: t.input_schema,
-      }));
+      const sdk = await import('@anthropic-ai/claude-agent-sdk');
+      const { z } = await import('zod');
+
+      const toolDefs = task.customTools.map(t => {
+        // Build a Zod shape from the JSON Schema properties.
+        // Each property becomes z.any() with .describe() for the SDK's schema generation.
+        // Real validation is handled by the tool's own handler.
+        const props = (t.input_schema.properties ?? {}) as Record<string, { description?: string }>;
+        const zodShape: Record<string, unknown> = {};
+        for (const [key, prop] of Object.entries(props)) {
+          zodShape[key] = z.any().describe(prop.description ?? '');
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        return sdk.tool(
+          t.name,
+          t.description,
+          zodShape as any,
+          async (args: Record<string, unknown>) => {
+            try {
+              const result = await t.handler(args);
+              return {
+                content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+              };
+            } catch (err) {
+              // Log here because MCP handler errors are invisible to Zora's logging —
+              // the SDK returns them directly to the agent without emitting events.
+              console.error(`[zora-tools] ${t.name} handler error:`, err);
+              throw err;
+            }
+          },
+        );
+      });
+
+      const mcpServers: Record<string, unknown> = {
+        ...(sdkOptions['mcpServers'] as Record<string, unknown> ?? {}),
+      };
+      mcpServers['zora-tools'] = sdk.createSdkMcpServer({
+        name: 'zora-tools',
+        version: '1.0.0',
+        tools: toolDefs,
+      });
+      sdkOptions['mcpServers'] = mcpServers;
+
+      // Add MCP-prefixed tool names to allowedTools so the SDK permits them.
+      // If allowedTools isn't set yet, include the SDK's default built-in tools
+      // so we don't accidentally restrict the agent to only custom tools.
+      const DEFAULT_SDK_TOOLS = [
+        'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
+        'WebSearch', 'WebFetch', 'Task',
+      ];
+      const customToolNames = task.customTools.map(t => `mcp__zora-tools__${t.name}`);
+      const existingAllowed = (sdkOptions['allowedTools'] as string[] | undefined) ?? DEFAULT_SDK_TOOLS;
+      sdkOptions['allowedTools'] = [...existingAllowed, ...customToolNames];
     }
 
     // Build the prompt from task context
