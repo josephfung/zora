@@ -164,9 +164,12 @@ export class MemoryManager {
       summary += `- Daily notes available (most recent: ${index.mostRecentDailyNote}, total: ${index.dailyNoteCount})\n`;
     }
 
-    summary += `- Use memory_search to find relevant context\n`;
-    summary += `- Use recall_context to read recent daily notes\n`;
-    summary += `- Use memory_save to store new facts\n`;
+    // Tool names must match the MCP-prefixed names registered in execution-loop.ts
+    // (custom tools are served via the 'zora-tools' MCP server)
+    summary += `- Use mcp__zora-tools__memory_search to find relevant context\n`;
+    summary += `- Use mcp__zora-tools__recall_context to read recent daily notes\n`;
+    summary += `- Use mcp__zora-tools__memory_save to store new facts\n`;
+    summary += `- Use mcp__zora-tools__memory_forget to remove outdated or incorrect memories\n`;
     summary += `Only retrieve what you need for this task.`;
 
     parts.push(summary);
