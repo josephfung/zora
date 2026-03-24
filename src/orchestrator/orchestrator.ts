@@ -36,6 +36,7 @@ import { ToolHookRunner } from '../hooks/tool-hook-runner.js';
 import type { ToolHook } from '../hooks/tool-hook-runner.js';
 import { ShellSafetyHook } from '../hooks/built-in/shell-safety.js';
 import { AuditLogHook } from '../hooks/built-in/audit-log.js';
+import { AuditLogger } from '../security/audit-logger.js';
 import { RateLimitHook } from '../hooks/built-in/rate-limit.js';
 import { SecretRedactHook } from '../hooks/built-in/secret-redact.js';
 import { SensitiveFileGuardHook } from '../hooks/built-in/sensitive-file-guard.js';
@@ -142,6 +143,7 @@ export class Orchestrator {
   private _integrityGuardian!: IntegrityGuardian;
   private _secretsManager?: SecretsManager;
   private _approvalQueue?: ApprovalQueue; // SEC-FIX-2: wired into policyEngine during boot()
+  private _auditLogger!: AuditLogger;
 
   // Per-job capability tokens (keyed by jobId) for worker isolation enforcement
   private _activeTokens = new Map<string, WorkerCapabilityToken>();
@@ -176,6 +178,10 @@ export class Orchestrator {
   private _authCheckTimeout: ReturnType<typeof setTimeout> | null = null;
   private _retryPollTimeout: ReturnType<typeof setTimeout> | null = null;
   private _consolidationTimeout: ReturnType<typeof setTimeout> | null = null;
+  // SEC-11: Periodic integrity check timer (driven by security.integrity_interval)
+  private _integrityCheckTimeout: ReturnType<typeof setTimeout> | null = null;
+  // Set to true during shutdown so in-flight integrity check callbacks skip rescheduling.
+  private _shuttingDown = false;
 
   private _booted = false;
 
@@ -238,7 +244,8 @@ export class Orchestrator {
     if (this._booted) return;
 
     // Initialize core services
-    this._notifications = new NotificationTools();
+    // Wire notifications.enabled + per-event toggles from config
+    this._notifications = new NotificationTools(this._config.notifications);
     this._policyEngine = new PolicyEngine(this._policy);
     this._policyEngine.startSession(`session_${Date.now()}`);
 
@@ -254,11 +261,37 @@ export class Orchestrator {
       this._policyEngine.setApprovalQueue(this._approvalQueue);
     }
 
+    // ── Always-on security features ───────────────────────────────────
+    // These four fields are hardened: disabling them in config.toml has no effect.
+    // We emit a console.warn so users know their config value was ignored.
+    const sec = this._config.security;
+    if (!sec.audit_log) {
+      console.warn('[Zora] security.audit_log=false is ignored — audit logging is always enabled for security');
+    }
+    if (!sec.integrity_check) {
+      console.warn('[Zora] security.integrity_check=false is ignored — integrity checking is always enabled for security');
+    }
+    if (!sec.leak_detection) {
+      console.warn('[Zora] security.leak_detection=false is ignored — leak detection is always enabled for security');
+    }
+    if (!sec.sanitize_untrusted_content) {
+      console.warn('[Zora] security.sanitize_untrusted_content=false is ignored — input sanitization is always enabled for security');
+    }
+    if (!sec.jit_secret_decryption) {
+      console.warn('[Zora] security.jit_secret_decryption=false is ignored — JIT secret decryption is always enabled for security');
+    }
+
     // SEC-03: Wire LeakDetector for scanning tool outputs
     this._leakDetector = new LeakDetector();
 
-    // SEC-11: IntegrityGuardian — baseline + tamper detection for critical config files
-    this._integrityGuardian = new IntegrityGuardian(this._baseDir);
+    // SEC-11: IntegrityGuardian — baseline + tamper detection for critical config files.
+    // Wire security.integrity_includes_tool_registry to control whether the tool
+    // registry hash is included in the baseline.
+    this._integrityGuardian = new IntegrityGuardian(
+      this._baseDir,
+      {},
+      { includesToolRegistry: sec.integrity_includes_tool_registry },
+    );
     const baselinesPath = path.join(this._baseDir, 'state', 'integrity-baselines.json');
     let baselinesExist = false;
     try {
@@ -285,7 +318,41 @@ export class Orchestrator {
       }
     }
 
-    // SEC-12: SecretsManager — AES-256-GCM encrypted secrets at rest
+    // Schedule periodic integrity checks driven by security.integrity_interval.
+    // Uses a self-rescheduling setTimeout (same pattern as authMonitor) to avoid
+    // overlapping async executions.
+    // Coerce integrity_interval to string in case a user wrote an unquoted number
+    // in config.toml (e.g. integrity_interval = 5 instead of "5m"), which would
+    // cause _parseIntervalMinutes to receive a number and silently return the default.
+    const integrityIntervalMs = this._parseIntervalMinutes(String(sec.integrity_interval ?? '5m')) * 60 * 1000;
+    const scheduleIntegrityCheck = () => {
+      this._integrityCheckTimeout = setTimeout(async () => {
+        try {
+          const result = await this._integrityGuardian.checkIntegrity();
+          if (!result.valid) {
+            for (const mismatch of result.mismatches) {
+              log.warn(
+                { file: mismatch.file, expected: mismatch.expected.slice(0, 8), actual: mismatch.actual.slice(0, 8) },
+                'Periodic integrity check: mismatch detected',
+              );
+            }
+          }
+        } catch (err) {
+          log.error({ err }, 'Periodic integrity check failed');
+        }
+        // Do not reschedule if shutdown has been initiated — prevents the timer from
+        // surviving past shutdown() when a check was in-flight at shutdown time.
+        if (!this._shuttingDown) {
+          scheduleIntegrityCheck();
+        }
+      }, integrityIntervalMs);
+    };
+    this._shuttingDown = false; // reset in case of re-boot
+    scheduleIntegrityCheck();
+
+    // SEC-12: SecretsManager — AES-256-GCM encrypted secrets at rest.
+    // security.policy_file is read once at startup via resolvePolicy() in daemon.ts/cli/index.ts;
+    // it is intentionally read-once so that the runtime policy is stable for the entire session.
     const masterPassword = process.env['ZORA_MASTER_PASSWORD'];
     if (masterPassword) {
       this._secretsManager = new SecretsManager(this._baseDir, masterPassword);
@@ -477,7 +544,27 @@ export class Orchestrator {
     // non-bypassable layer that cannot be disabled via policy.toml.
     this._toolHookRunner.register(SensitiveFileGuardHook);
     this._toolHookRunner.register(ShellSafetyHook);
-    this._toolHookRunner.register(new AuditLogHook());
+    // Wire security.audit_log path so the hook writes to the user-configured location.
+    // sec.audit_log may be `false` when the user sets audit_log=false in config.toml
+    // (we warn above and always enable auditing, but the value is still boolean false).
+    // Normalize to a string before calling .replace() to avoid a boot-time crash.
+    const auditLogPath = (typeof sec.audit_log === 'string' ? sec.audit_log : '~/.zora/audit/audit.jsonl').replace(/^~/, os.homedir());
+    this._toolHookRunner.register(new AuditLogHook(auditLogPath));
+    // AuditLogger: structured hash-chained security event log (boot/shutdown/auth events).
+    // audit_hash_chain and audit_single_writer config fields take effect here.
+    this._auditLogger = new AuditLogger(auditLogPath.replace('.jsonl', '-security.jsonl'), {
+      hashChain: sec.audit_hash_chain ?? true,
+      singleWriter: sec.audit_single_writer ?? true,
+    });
+    await this._auditLogger.log({
+      jobId: 'system',
+      eventType: 'tool_invocation',
+      timestamp: new Date().toISOString(),
+      provider: 'system',
+      toolName: 'orchestrator_boot',
+      parameters: { agentName: this._config.agent.name },
+      result: {},
+    });
     this._toolHookRunner.register(new RateLimitHook([
       { tool: 'bash', maxCalls: 60, windowMs: 60_000 },
       { tool: 'http_request', maxCalls: 100, windowMs: 60_000 },
@@ -614,6 +701,22 @@ export class Orchestrator {
   async shutdown(): Promise<void> {
     if (!this._booted) return;
 
+    // Log shutdown to the security audit trail before teardown
+    if (this._auditLogger) {
+      await this._auditLogger.log({
+        jobId: 'system',
+        eventType: 'tool_invocation',
+        timestamp: new Date().toISOString(),
+        provider: 'system',
+        toolName: 'orchestrator_shutdown',
+        parameters: { agentName: this._config.agent.name },
+        result: {},
+      }).catch(() => {});
+    }
+
+    // Signal shutdown so any in-flight integrity check callback skips rescheduling.
+    this._shuttingDown = true;
+
     // Stop background timers
     if (this._authCheckTimeout) {
       clearTimeout(this._authCheckTimeout);
@@ -626,6 +729,10 @@ export class Orchestrator {
     if (this._consolidationTimeout) {
       clearTimeout(this._consolidationTimeout);
       this._consolidationTimeout = null;
+    }
+    if (this._integrityCheckTimeout) {
+      clearTimeout(this._integrityCheckTimeout);
+      this._integrityCheckTimeout = null;
     }
 
     // Stop heartbeat and routines
@@ -845,6 +952,10 @@ export class Orchestrator {
       selectedProvider = await this._router.selectProvider(hookedContext);
     } catch (err) {
       this._activeTokens.delete(jobId);
+      // on_all_providers_down notification — gated by notifications.on_all_providers_down
+      this._notifications.notifyAllProvidersDown().catch(e => {
+        log.debug({ e }, 'notifyAllProvidersDown failed (non-critical)');
+      });
       throw new Error(`No provider available: ${err instanceof Error ? err.message : String(err)}`);
     }
 
@@ -884,6 +995,11 @@ export class Orchestrator {
     } catch (err) {
       log.warn({ err, jobId }, 'Autonomous skill synthesis failed (non-critical)');
     }
+
+    // on_task_complete notification — gated by notifications.on_task_complete
+    this._notifications.notifyTaskComplete(jobId).catch(err => {
+      log.debug({ err }, 'notifyTaskComplete failed (non-critical)');
+    });
 
     return execResult;
   }
@@ -1296,12 +1412,22 @@ export class Orchestrator {
             );
 
             if (failoverResult) {
+              // on_failover notification — gated by notifications.on_failover
+              this._notifications.notifyFailover(
+                provider.name,
+                failoverResult.nextProvider.name,
+                errorContent.message ?? 'provider error',
+              ).catch(e => { log.debug({ e }, 'notifyFailover failed (non-critical)'); });
               // Re-execute with the failover provider (increment depth)
               // Preserve intent capsule across failover and pass same patternDetector
               return this._executeWithFailoverProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
             }
 
-            // R5: Enqueue for retry if no failover available
+            // R5: Enqueue for retry if no failover available — notify on unrecoverable error
+            this._notifications.notifyError(
+              taskContext.jobId,
+              errorContent.message ?? 'provider error',
+            ).catch(e => { log.debug({ e }, 'notifyError failed (non-critical)'); });
             try {
               await this._retryQueue.enqueue(taskContext, error.message, this._config.failover.max_retries);
             } catch {
@@ -1325,13 +1451,23 @@ export class Orchestrator {
           );
 
           if (failoverResult) {
+            // on_failover notification — gated by notifications.on_failover
+            this._notifications.notifyFailover(
+              provider.name,
+              failoverResult.nextProvider.name,
+              err.message,
+            ).catch(e => { log.debug({ e }, 'notifyFailover failed (non-critical)'); });
             // Mark the error so downstream doesn't re-trigger failover
             Orchestrator._failoverErrors.add(err);
             // Preserve intent capsule across failover and pass same patternDetector
             return this._executeWithFailoverProvider(failoverResult.nextProvider, taskContext, onEvent, failoverDepth + 1, injectionDepth, compressor, patternDetector);
           }
 
-          // R5: Enqueue for retry
+          // R5: Enqueue for retry — notify on unrecoverable error
+          this._notifications.notifyError(
+            taskContext.jobId,
+            err.message,
+          ).catch(e => { log.debug({ e }, 'notifyError failed (non-critical)'); });
           try {
             await this._retryQueue.enqueue(taskContext, err.message, this._config.failover.max_retries);
           } catch {
@@ -1938,6 +2074,12 @@ export class Orchestrator {
   /** Exposes SkillSynthesizer so daemon can wire ApprovalQueue after boot */
   get skillSynthesizer(): SkillSynthesizer {
     return this._skillSynthesizer;
+  }
+
+  /** Security audit logger — hash-chained log of lifecycle events (boot/shutdown/auth) */
+  get auditLogger(): AuditLogger {
+    this._assertBooted();
+    return this._auditLogger;
   }
 
   get config(): ZoraConfig {

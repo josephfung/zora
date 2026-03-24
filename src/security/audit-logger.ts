@@ -18,6 +18,24 @@ const GENESIS_HASH = 'genesis';
 
 export type AuditEntryInput = Omit<AuditEntry, 'previousHash' | 'hash' | 'entryId'>;
 
+export interface AuditLoggerOptions {
+  /**
+   * When true (default), every entry includes a SHA-256 hash of the previous entry,
+   * forming a tamper-evident chain. Set false to disable hash chaining (log entries
+   * are written without hash fields, losing chain integrity guarantees).
+   * Maps to security.audit_hash_chain in config.
+   */
+  hashChain?: boolean;
+  /**
+   * Reserved for future use. Currently ignored: all writes are always serialised
+   * through a single Promise queue because _appendEntry() mutates shared state
+   * (_initialized, _entryCounter, _previousHash) that is not safe for concurrent
+   * access. Setting this to false emits a warning and has no effect.
+   * Maps to security.audit_single_writer in config.
+   */
+  singleWriter?: boolean;
+}
+
 export interface AuditFilter {
   jobId?: string;
   eventType?: AuditEntryEventType;
@@ -34,18 +52,40 @@ export interface ChainVerificationResult {
 
 export class AuditLogger {
   private readonly _logPath: string;
+  private readonly _hashChain: boolean;
+  private readonly _singleWriter: boolean;
   private _previousHash: string = GENESIS_HASH;
   private _entryCounter = 0;
   private _writeQueue: Promise<void> = Promise.resolve();
   private _initialized = false;
 
-  constructor(auditLogPath: string) {
+  constructor(auditLogPath: string, options: AuditLoggerOptions = {}) {
     this._logPath = auditLogPath;
+    this._hashChain = options.hashChain ?? true;
+
+    const requestedSingleWriter = options.singleWriter ?? true;
+    // singleWriter=false is unsupported: _appendEntry() mutates shared state
+    // (_initialized, _entryCounter, _previousHash) that is not safe for concurrent
+    // access. Even when hashChain=false, concurrent writers would race on
+    // _entryCounter and _initialized, producing duplicate entryIds or corrupt
+    // initialization. Always promote to singleWriter=true and warn so operators know.
+    if (!requestedSingleWriter) {
+      log.warn(
+        'singleWriter=false is not supported — concurrent writes race on shared mutable state ' +
+        '(_entryCounter, _initialized) and would produce duplicate entry IDs or corrupt initialization. ' +
+        'Writes will be serialized as if singleWriter=true.',
+      );
+      this._singleWriter = true;
+    } else {
+      this._singleWriter = requestedSingleWriter;
+    }
   }
 
   /**
    * Append an audit entry to the log.
-   * Uses a serialized writer queue so only one write happens at a time.
+   *
+   * All writes are serialised through a Promise queue so no two concurrent writes
+   * can corrupt the file or produce duplicate entry IDs.
    */
   async log(input: AuditEntryInput): Promise<AuditEntry> {
     // Queue the write and return the entry once written
@@ -111,6 +151,13 @@ export class AuditLogger {
    * Verify the hash chain integrity of the entire audit log.
    */
   async verifyChain(): Promise<ChainVerificationResult> {
+    // When hash chaining is disabled, entries are written without hash fields.
+    // Attempting to verify the chain against those entries would always fail,
+    // so return a meaningful result instead of false positives.
+    if (!this._hashChain) {
+      return { valid: true, entries: 0, reason: 'Hash chaining disabled — chain verification not applicable' };
+    }
+
     let content: string;
     try {
       content = await fs.readFile(this._logPath, 'utf-8');
@@ -246,25 +293,40 @@ export class AuditLogger {
 
     const entryId = `audit-${++this._entryCounter}`;
 
-    // Build the entry without hash first
-    const entryWithoutHash = {
-      entryId,
-      jobId: input.jobId,
-      eventType: input.eventType,
-      timestamp: input.timestamp,
-      provider: input.provider,
-      toolName: input.toolName,
-      parameters: input.parameters,
-      result: input.result,
-      previousHash: this._previousHash,
-    };
+    let entry: AuditEntry;
 
-    const hash = this._computeHashFromParts(entryWithoutHash);
+    if (this._hashChain) {
+      // Hash-chained mode: compute previousHash + hash for tamper evidence
+      const entryWithoutHash = {
+        entryId,
+        jobId: input.jobId,
+        eventType: input.eventType,
+        timestamp: input.timestamp,
+        provider: input.provider,
+        toolName: input.toolName,
+        parameters: input.parameters,
+        result: input.result,
+        previousHash: this._previousHash,
+      };
 
-    const entry: AuditEntry = {
-      ...entryWithoutHash,
-      hash,
-    };
+      const hash = this._computeHashFromParts(entryWithoutHash);
+      entry = { ...entryWithoutHash, hash };
+      this._previousHash = hash;
+    } else {
+      // Hash-chain disabled: omit previousHash/hash fields
+      entry = {
+        entryId,
+        jobId: input.jobId,
+        eventType: input.eventType,
+        timestamp: input.timestamp,
+        provider: input.provider,
+        toolName: input.toolName,
+        parameters: input.parameters,
+        result: input.result,
+        previousHash: '',
+        hash: '',
+      };
+    }
 
     // Append to file
     // ERR-01: Wrap file write with explicit error handling and logging
@@ -276,7 +338,6 @@ export class AuditLogger {
       throw new Error(`Audit log write failed: ${error.message}`, { cause: error });
     }
 
-    this._previousHash = hash;
     return entry;
   }
 
