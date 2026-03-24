@@ -146,6 +146,21 @@ export class ApprovalQueue {
     return true;
   }
 
+  /**
+   * Pre-activate a session-scoped blanket allow for actions scoring below maxScore.
+   * Used by steering.auto_approve_low_risk — all low-risk actions are auto-approved
+   * for the duration of the process without requiring an interactive approval reply.
+   */
+  setSessionBlanketAllow(maxScore: number): void {
+    if (!Number.isFinite(maxScore) || maxScore < 0) {
+      log.warn({ maxScore }, 'setSessionBlanketAllow: invalid maxScore — blanket allow not activated');
+      return;
+    }
+    this._blanketSessionScoped = true;
+    this._blanketMaxScore = maxScore;
+    log.info({ maxScore }, 'auto_approve_low_risk: session blanket allow pre-activated');
+  }
+
   /** Check for pending approvals (for status display) */
   getPendingCount(): number {
     return this._pending.size;
