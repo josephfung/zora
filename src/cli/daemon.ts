@@ -33,6 +33,7 @@ import { ApprovalQueue, DEFAULT_APPROVAL_CONFIG } from '../core/approval-queue.j
 import { initGlobalCooldown, DEFAULT_COOLDOWN_CONFIG } from '../core/agent-cooldown.js';
 import { initGlobalForecaster, DEFAULT_FORECASTER_CONFIG } from '../core/memory-risk-forecaster.js';
 import { runSecurityAuditSilent } from './security-commands.js';
+import { TelegramGateway, type TelegramConfig } from '../steering/telegram-gateway.js';
 
 // Allow claude CLI to run as a subprocess even when launched from a Claude Code session.
 // Claude Code sets CLAUDECODE to prevent nesting, but the Zora daemon legitimately
@@ -204,6 +205,46 @@ async function main() {
   });
   agentBusClient.register(); // non-blocking — failure never delays startup
 
+  // Wire TelegramGateway into the steering subsystem (HITL /steer, /status, /approve).
+  // This is separate from TelegramAdapter (ChannelManager general messaging).
+  // Runs daemon-only; skipped in one-shot `ask` mode via the enabled guard.
+  // Skip if channel-policy.toml is present — TelegramAdapter (via ChannelManager) will
+  // handle Telegram in that case; starting both would cause dual long-poll on the same token.
+  const channelPolicyExistsForGateway = fs.existsSync(path.join(configDir, 'config', 'channel-policy.toml'));
+  let telegramGateway: TelegramGateway | undefined;
+  const telegramCfg = config.steering.telegram;
+  if (telegramCfg?.enabled && !channelPolicyExistsForGateway) {
+    const token = telegramCfg.bot_token || process.env['TELEGRAM_BOT_TOKEN'];
+    if (!token) {
+      log.warn('steering.telegram.enabled=true but TELEGRAM_BOT_TOKEN is not set — TelegramGateway disabled');
+    } else {
+      try {
+        const gatewayConfig: TelegramConfig = {
+          ...config.steering,
+          bot_token: token,
+          allowed_users: telegramCfg.allowed_users,
+          enabled: true,
+          mode: telegramCfg.mode ?? 'polling',
+          project_dir: projectDir,
+        };
+        telegramGateway = await TelegramGateway.create(
+          gatewayConfig,
+          orchestrator.steeringManager,
+          orchestrator.sessionManager,
+        );
+        // Connect ApprovalQueue so /approve commands reach the gate
+        if (approvalQueue.isEnabled()) {
+          telegramGateway.connectApprovalQueue(approvalQueue);
+          log.info('ApprovalQueue wired to TelegramGateway');
+        }
+        log.info({ allowedUsers: (telegramCfg.allowed_users?.length ?? 0) }, 'TelegramGateway online (steering HITL)');
+      } catch (err) {
+        log.error({ err: err instanceof Error ? err.message : String(err) }, 'TelegramGateway failed to start — continuing without it');
+        telegramGateway = undefined;
+      }
+    }
+  }
+
   // Start dashboard server
   const dashboard = new DashboardServer({
     providers,
@@ -317,6 +358,10 @@ async function main() {
     log.info({ signal }, 'Received signal, shutting down');
 
     const graceful = async () => {
+      if (telegramGateway) {
+        try { await telegramGateway.stop(); } catch (err) { log.warn({ err }, 'Telegram gateway stop error'); }
+        telegramGateway = undefined;
+      }
       try {
         if (channelManager) {
           await channelManager.stop();
