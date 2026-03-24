@@ -307,15 +307,16 @@ export class ClaudeProvider implements LLMProvider {
         // Each property becomes z.any() with .describe() for the SDK's schema generation.
         // Real validation is handled by the tool's own handler.
         const props = (t.input_schema.properties ?? {}) as Record<string, { description?: string }>;
-        const zodShape: Record<string, z.ZodTypeAny> = {};
+        const zodShape: Record<string, unknown> = {};
         for (const [key, prop] of Object.entries(props)) {
           zodShape[key] = z.any().describe(prop.description ?? '');
         }
 
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return sdk.tool(
           t.name,
           t.description,
-          zodShape,
+          zodShape as any,
           async (args: Record<string, unknown>) => {
             try {
               const result = await t.handler(args);
