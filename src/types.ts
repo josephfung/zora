@@ -420,6 +420,9 @@ export interface ClaudeProviderConfig extends BaseProviderConfig {
   type: 'claude-sdk';
   auth_method?: 'mac_session' | 'api_key';
   api_key_env?: string;
+  /** Permission mode for the Claude Code subprocess.
+   *  'bypassPermissions' fails as root in Docker — use 'acceptEdits' instead. */
+  permission_mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
 }
 
 /** TYPE-04: Gemini CLI provider config */
@@ -454,6 +457,9 @@ export interface ProviderConfig {
   cli_path?: string;
   api_key_env?: string;
   endpoint?: string;
+  /** Permission mode for the Claude Code subprocess.
+   *  'bypassPermissions' fails as root in Docker — use 'acceptEdits' instead. */
+  permission_mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan';
 }
 
 /** TYPE-04: Typed provider config discriminated union */
