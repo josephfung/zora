@@ -300,10 +300,17 @@ export class ClaudeProvider implements LLMProvider {
         description: t.description,
         inputSchema: t.input_schema as Record<string, unknown>,
         handler: async (args: Record<string, unknown>) => {
-          const result = await t.handler(args);
-          return {
-            content: [{ type: 'text' as const, text: JSON.stringify(result) }],
-          };
+          try {
+            const result = await t.handler(args);
+            return {
+              content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+            };
+          } catch (err) {
+            // Log here because MCP handler errors are invisible to Zora's logging —
+            // the SDK returns them directly to the agent without emitting events.
+            console.error(`[zora-tools] ${t.name} handler error:`, err);
+            throw err;
+          }
         },
       }));
 
