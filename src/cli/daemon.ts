@@ -193,9 +193,16 @@ async function main() {
 
   const providers = createProviders(config);
   const orchestrator = new Orchestrator({ config, policy, providers, baseDir: configDir });
+
   // SEC-FIX-2: Register ApprovalQueue before boot() so PolicyEngine has an enforcement
   // path for always_flag actions even when no flagCallback is wired.
   orchestrator.setApprovalQueue(approvalQueue);
+
+  // Wire ApprovalQueue into SkillSynthesizer BEFORE boot() so any skill synthesized
+  // during the startup window already has a queue in place. Moving this after boot()
+  // would leave a race window where a completing task silently drops the skill.
+  orchestrator.skillSynthesizer.setApprovalQueue(approvalQueue);
+
   await orchestrator.boot();
 
   // Register with AgentBus (best-effort — failure doesn't block startup)
