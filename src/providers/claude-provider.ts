@@ -175,7 +175,12 @@ export class ClaudeProvider implements LLMProvider {
     this._cwd = options.cwd ?? process.cwd();
     this._systemPrompt = options.systemPrompt ?? '';
     this._allowedTools = options.allowedTools ?? [];
-    this._permissionMode = options.permissionMode ?? 'bypassPermissions';
+    // Read permission_mode from provider config, falling back to options, then default.
+    // 'bypassPermissions' fails when running as root in Docker, so containers
+    // should set permission_mode = "acceptEdits" in config.toml.
+    this._permissionMode = config.permission_mode
+      ?? options.permissionMode
+      ?? 'bypassPermissions';
     this._circuitBreaker = new CircuitBreaker();
 
     // Dependency injection: use provided queryFn or lazy-load the real SDK
