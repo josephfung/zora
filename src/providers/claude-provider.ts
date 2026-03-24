@@ -317,9 +317,15 @@ export class ClaudeProvider implements LLMProvider {
       });
       sdkOptions['mcpServers'] = mcpServers;
 
-      // Add MCP-prefixed tool names to allowedTools so the SDK permits them
+      // Add MCP-prefixed tool names to allowedTools so the SDK permits them.
+      // If allowedTools isn't set yet, include the SDK's default built-in tools
+      // so we don't accidentally restrict the agent to only custom tools.
+      const DEFAULT_SDK_TOOLS = [
+        'Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep',
+        'WebSearch', 'WebFetch', 'Task',
+      ];
       const customToolNames = task.customTools.map(t => `mcp__zora-tools__${t.name}`);
-      const existingAllowed = (sdkOptions['allowedTools'] as string[] | undefined) ?? [];
+      const existingAllowed = (sdkOptions['allowedTools'] as string[] | undefined) ?? DEFAULT_SDK_TOOLS;
       sdkOptions['allowedTools'] = [...existingAllowed, ...customToolNames];
     }
 
