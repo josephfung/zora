@@ -381,10 +381,14 @@ const App: React.FC = () => {
           // so we only add a message if the agent bubble is missing.
           const text = data.data?.text ?? '';
           if (text) {
+            // Capture id and timestamp outside the updater so the function stays pure
+            // (React may call updaters multiple times in Strict Mode / concurrent rendering)
+            const nextId = ++messageIdCounter;
+            const now = new Date();
             setMessages(prev => {
               const last = prev[prev.length - 1];
               if (last?.type === 'agent') return prev; // already shown via text streaming
-              return [...prev, { id: ++messageIdCounter, type: 'agent' as const, content: text, timestamp: new Date() }].slice(-MAX_MESSAGES);
+              return [...prev, { id: nextId, type: 'agent' as const, content: text, timestamp: now }].slice(-MAX_MESSAGES);
             });
           }
           setTaskRunning(false);
